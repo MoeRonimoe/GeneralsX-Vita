@@ -7,8 +7,9 @@ The Vita only accepts 8 bit palette PNG files for these, in fixed sizes:
     livearea/contents/startup.png  280 x 158   gate image that starts the game
 
 The artwork is drawn here from scratch (a star on a dark field and the title),
-so the repository contains nothing taken from the game. Run this script again
-after changing it; the generated files are checked in.
+for a repository that is to contain nothing taken from the game;
+convert_artwork.py makes the images from the game's artwork instead. Run this
+script again after changing it; the generated files are checked in.
 
     python make_livearea.py [path to a bold TrueType font]
 """
