@@ -23,7 +23,23 @@ char* _strupr(char* str);
 
 #define lstrcat strcat
 #define lstrcpy strcpy
-#define lstrcpyn strncpy
+// GeneralsX @bugfix Claude 12/10/2026 lstrcpyn() is not strncpy(): the Windows function copies at most
+// count - 1 characters and always ends the string. Mapped to strncpy(), the code that makes a file name
+// of "Model.Part" (lstrcpyn up to the dot, then lstrcat ".w3d") kept the dot, got no end of string and
+// appended to whatever followed in the buffer. The file was never found, and every request for the
+// part went to the disk again with another name.
+#ifndef GENERALSX_LSTRCPYN_DEFINED
+#define GENERALSX_LSTRCPYN_DEFINED
+static inline char *lstrcpyn(char *destination, const char *source, int count)
+{
+	if (count > 0)
+	{
+		strncpy(destination, source, count - 1);
+		destination[count - 1] = 0;
+	}
+	return destination;
+}
+#endif
 #define lstrcmpi strcasecmp
 #define lstrlen strlen
 #define _stricmp strcasecmp
