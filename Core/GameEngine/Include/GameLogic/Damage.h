@@ -236,22 +236,28 @@ typedef UnsignedInt DeathTypeFlags;
 const DeathTypeFlags DEATH_TYPE_FLAGS_ALL = 0xffffffff;
 const DeathTypeFlags DEATH_TYPE_FLAGS_NONE = 0x00000000;
 
-// @fix Use 1U (32-bit) instead of 1UL. On ARM64 macOS, unsigned long is 64-bit,
-// so 1UL << (DEATH_NORMAL - 1) = 1UL << (-1) shifts to bit 63, which is outside
-// the 32-bit DeathTypeFlags range. With 1U, it wraps to bit 31 (matching Windows x86).
+// GeneralsX @bugfix Claude 11/10/2026 The retail code shifts by (dt - 1), which is -1 for DEATH_NORMAL.
+// x86 and ARM64 take the count modulo 32 and end up at bit 31; 32-bit ARM shifts everything
+// out and gets 0, so no death module ever applied to a death of the normal type. The
+// count is now reduced explicitly, which gives bit 31 everywhere, as on Windows x86.
+inline DeathTypeFlags getDeathTypeBit(DeathType dt)
+{
+	return 1U << ((dt - 1) & 31);
+}
+
 inline Bool getDeathTypeFlag(DeathTypeFlags flags, DeathType dt)
 {
-	return (flags & (1U << (dt - 1))) != 0;
+	return (flags & getDeathTypeBit(dt)) != 0;
 }
 
 inline DeathTypeFlags setDeathTypeFlag(DeathTypeFlags flags, DeathType dt)
 {
-	return (flags | (1U << (dt - 1)));
+	return (flags | getDeathTypeBit(dt));
 }
 
 inline DeathTypeFlags clearDeathTypeFlag(DeathTypeFlags flags, DeathType dt)
 {
-	return (flags & ~(1U << (dt - 1)));
+	return (flags & ~getDeathTypeBit(dt));
 }
 
 //-------------------------------------------------------------------------------------------------

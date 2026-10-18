@@ -286,22 +286,29 @@ typedef UnsignedInt VeterancyLevelFlags;
 const VeterancyLevelFlags VETERANCY_LEVEL_FLAGS_ALL = 0xffffffff;
 const VeterancyLevelFlags VETERANCY_LEVEL_FLAGS_NONE = 0x00000000;
 
-// @fix Use 1U (32-bit) instead of 1UL. On ARM64 macOS, unsigned long is 64-bit,
-// so 1UL << (LEVEL_REGULAR - 1) = 1UL << (-1) shifts to bit 63, which is outside
-// the 32-bit VeterancyLevelFlags range. With 1U, it wraps to bit 31 (matching Windows x86).
+// GeneralsX @bugfix Claude 11/10/2026 The retail code shifts by (dt - 1), which is -1 for LEVEL_REGULAR.
+// x86 and ARM64 take the count modulo 32 and end up at bit 31; 32-bit ARM shifts everything
+// out and gets 0, so nothing that depends on the veterancy level (death modules among
+// others) ever applied to a unit without a promotion. The count is now reduced
+// explicitly, which gives bit 31 everywhere, as on Windows x86.
+inline VeterancyLevelFlags getVeterancyLevelBit(VeterancyLevel dt)
+{
+	return 1U << ((dt - 1) & 31);
+}
+
 inline Bool getVeterancyLevelFlag(VeterancyLevelFlags flags, VeterancyLevel dt)
 {
-	return (flags & (1U << (dt - 1))) != 0;
+	return (flags & getVeterancyLevelBit(dt)) != 0;
 }
 
 inline VeterancyLevelFlags setVeterancyLevelFlag(VeterancyLevelFlags flags, VeterancyLevel dt)
 {
-	return (flags | (1U << (dt - 1)));
+	return (flags | getVeterancyLevelBit(dt));
 }
 
 inline VeterancyLevelFlags clearVeterancyLevelFlag(VeterancyLevelFlags flags, VeterancyLevel dt)
 {
-	return (flags & ~(1U << (dt - 1)));
+	return (flags & ~getVeterancyLevelBit(dt));
 }
 
 // ----------------------------------------------------------------------------------------------
