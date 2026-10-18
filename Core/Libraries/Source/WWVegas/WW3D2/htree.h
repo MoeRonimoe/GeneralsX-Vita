@@ -117,7 +117,8 @@ public:
 	void					Capture_Bone(int boneindex);
 	void					Release_Bone(int boneindex);
 	bool					Is_Bone_Captured(int boneindex) const;
-	void					Control_Bone(int boneindex,const Matrix3D & relative_tm,bool world_space_translation = false);
+	// GeneralsX @performance Claude 13/10/2026 Says whether that changed anything, see htree.cpp.
+	bool					Control_Bone(int boneindex,const Matrix3D & relative_tm,bool world_space_translation = false);
 	void					Get_Bone_Control(int boneindex, Matrix3D & relative_tm) const;
 
 

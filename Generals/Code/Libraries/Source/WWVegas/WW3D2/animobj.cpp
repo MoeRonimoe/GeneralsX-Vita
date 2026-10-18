@@ -67,6 +67,7 @@
 #include "ww3d.h"
 #include "WWDebug/wwmemlog.h"
 #include "animatedsoundmgr.h"
+#include "frameprofile.h"
 
 
 /***********************************************************************************************
@@ -242,11 +243,11 @@ Animatable3DObjClass & Animatable3DObjClass::operator = (const Animatable3DObjCl
  *=============================================================================================*/
 void Animatable3DObjClass::Release()
 {
-	switch (CurMotionMode) {
 	// GeneralsX @bugfix Claude 16/10/2026 An animation that is set next is worked out from its own frame,
 	// see Raw_Anim_Update().
 	ShownRawMotion = nullptr;
 
+	switch (CurMotionMode) {
 
 		case BASE_POSE:
 			break;
@@ -693,8 +694,13 @@ const Matrix3D &	Animatable3DObjClass::Get_Bone_Transform(int boneindex)
  *=============================================================================================*/
 void Animatable3DObjClass::Capture_Bone(int boneindex)
 {
-	if (HTree) {
+	// GeneralsX @bugfix Claude 13/10/2026 A captured bone leaves the animation, which changes the
+	// hierarchy. This relied on the game setting the model's transform on every frame. A bone
+	// that is captured already changes nothing: the game captures the bones of its turrets and
+	// gun barrels again on every frame.
+	if (HTree && !HTree->Is_Bone_Captured(boneindex)) {
 		HTree->Capture_Bone(boneindex);
+		Set_Hierarchy_Valid(false);
 	}
 }
 
@@ -715,6 +721,8 @@ void Animatable3DObjClass::Release_Bone(int boneindex)
 {
 	if (HTree) {
 		HTree->Release_Bone(boneindex);
+		// GeneralsX @bugfix Claude 13/10/2026 See Capture_Bone().
+		Set_Hierarchy_Valid(false);
 	}
 }
 
@@ -763,8 +771,9 @@ void Animatable3DObjClass::Control_Bone(int bindex,const Matrix3D & objtm,bool w
 	}
 #endif
 
-	if (HTree) {
-		HTree->Control_Bone(bindex,objtm,world_space_translation);
+	// GeneralsX @performance Claude 13/10/2026 Only a bone that is given another transform than it
+	// has makes the model work its hierarchy out again, see HTreeClass::Control_Bone().
+	if (HTree && HTree->Control_Bone(bindex,objtm,world_space_translation)) {
 		Set_Hierarchy_Valid(false);
 	}
 }
@@ -783,6 +792,8 @@ void Animatable3DObjClass::Control_Bone(int bindex,const Matrix3D & objtm,bool w
  *=============================================================================================*/
 void Animatable3DObjClass::Update_Sub_Object_Transforms()
 {
+	WW3D_PROFILE_SCOPE(Anim_updateTransforms);
+
 	/*
 	** The RenderObj implementation will cause our 'container'
 	** to update if we are not valid yet
@@ -1049,17 +1060,6 @@ float Animatable3DObjClass::Compute_Current_Frame(float *newDirection) const
  * HISTORY:                                                                                    *
  *   10/26/99    BMG : Created.                                                                 *
  *=============================================================================================*/
-void Animatable3DObjClass::Single_Anim_Progress ()
-{
-	//
-	//	Update the current frame (only works in "SINGLE_ANIM" mode!)
-	//
-	WWASSERT(CurMotionMode == SINGLE_ANIM);
-
-	//
-	// Update the frame number and sync time
-	//
-	ModeAnim.PrevFrame		= ModeAnim.Frame;
 void Animatable3DObjClass::Raw_Anim_Update(const Matrix3D & root,HRawAnimClass * motion,float frame)
 {
 	// TheSuperHackers @tweak Keep the animation frame step in sync with the ww3d frame step if they can align.
@@ -1076,6 +1076,17 @@ void Animatable3DObjClass::Raw_Anim_Update(const Matrix3D & root,HRawAnimClass *
 	ShownRawFrame = frame;
 }
 
+void Animatable3DObjClass::Single_Anim_Progress ()
+{
+	//
+	//	Update the current frame (only works in "SINGLE_ANIM" mode!)
+	//
+	WWASSERT(CurMotionMode == SINGLE_ANIM);
+
+	//
+	// Update the frame number and sync time
+	//
+	ModeAnim.PrevFrame		= ModeAnim.Frame;
 	ModeAnim.Frame				= Compute_Current_Frame(&ModeAnim.animDirection);
 	ModeAnim.LastSyncTime	= WW3D::Get_Logic_Time_Milliseconds();
 }

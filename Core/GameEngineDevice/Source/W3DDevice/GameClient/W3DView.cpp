@@ -189,6 +189,8 @@ W3DView::W3DView()
 
 	m_cameraAreaConstraints.zero();
 	m_recalcCamera = false;
+	m_scriptedTerrainDrawSize.x = WorldHeightMap::NORMAL_DRAW_WIDTH;
+	m_scriptedTerrainDrawSize.y = WorldHeightMap::NORMAL_DRAW_HEIGHT;
 
 }
 
@@ -1371,10 +1373,10 @@ void W3DView::stepView()
 	}
 }
 
-//DECLARE_PERF_TIMER(W3DView_updateView)
+DECLARE_PERF_TIMER(W3DView_updateView)
 void W3DView::update()
 {
-	//USE_PERF_TIMER(W3DView_updateView)
+	USE_PERF_TIMER(W3DView_updateView)
 	Bool didScriptedMovement = false;
 
 #ifdef LOG_FRAME_TIMES
@@ -1849,10 +1851,10 @@ void W3DView::drawView()
 	DRAW();
 }
 
-//DECLARE_PERF_TIMER(W3DView_drawView)
+DECLARE_PERF_TIMER(W3DView_drawView)
 void W3DView::draw()
 {
-	//USE_PERF_TIMER(W3DView_drawView)
+	USE_PERF_TIMER(W3DView_drawView)
 	Bool skipRender = false;
 	Bool doExtraRender = false;
 	CustomScenePassModes customScenePassMode  = SCENE_PASS_DEFAULT;
@@ -3773,6 +3775,12 @@ bool W3DView::getDesiredTerrainDrawSize(ICoord2D &dimensions) const
 	{
 		// TheSuperHackers @info The scripted camera always uses the regular draw sizes
 		// and uses terrain oversize if it needs to enlarge.
+		// GeneralsX @bugfix Claude 14/10/2026 Unless it shows more than that, see updateTerrain().
+		if (!m_isUserControlled)
+		{
+			dimensions = m_scriptedTerrainDrawSize;
+			return true;
+		}
 		dimensions.x = WorldHeightMap::NORMAL_DRAW_WIDTH;
 		dimensions.y = WorldHeightMap::NORMAL_DRAW_HEIGHT;
 		return true;
@@ -3785,9 +3793,46 @@ bool W3DView::getDesiredTerrainDrawSize(ICoord2D &dimensions) const
 	return true;
 }
 
+//-------------------------------------------------------------------------------------------------
+// GeneralsX @bugfix Claude 14/10/2026 The draw size of the scripted camera in one direction: grown
+// by vertex buffer tiles until it holds the cells in view and one more on each side, for the
+// triangles reaching into the view, but never beyond the low angle draw size.
+//-------------------------------------------------------------------------------------------------
+static Int growScriptedTerrainDrawSize(Int drawSize, Int visibleCells, Int largestDrawSize)
+{
+	while (drawSize < visibleCells + 2 && drawSize < largestDrawSize)
+	{
+		drawSize += VERTEX_BUFFER_TILE_LENGTH;
+	}
+	return std::min(drawSize, largestDrawSize);
+}
+
 void W3DView::updateTerrain()
 {
 	DEBUG_ASSERTCRASH(TheTerrainRenderObject != nullptr, ("TheTerrainRenderObject is null"));
+
+	// GeneralsX @bugfix Claude 14/10/2026 What a scripted camera shows can be larger than the regular
+	// draw size, more so at a low pitch: the terrain ended in the sky behind trees and buildings. Its
+	// draw size grows to the visible area found when the terrain was last centered, and stays grown
+	// until the player has the camera again, since every change of the size rebuilds all of the
+	// terrain's vertices. Maps that oversize the terrain by script are drawn as large as before.
+	const ICoord2D previousScriptedSize = m_scriptedTerrainDrawSize;
+	if (m_isUserControlled)
+	{
+		m_scriptedTerrainDrawSize.x = WorldHeightMap::NORMAL_DRAW_WIDTH;
+		m_scriptedTerrainDrawSize.y = WorldHeightMap::NORMAL_DRAW_HEIGHT;
+	}
+	else
+	{
+		const ICoord2D &visibleCells = TheTerrainRenderObject->getVisibleAreaSize();
+		m_scriptedTerrainDrawSize.x = growScriptedTerrainDrawSize(m_scriptedTerrainDrawSize.x, visibleCells.x, WorldHeightMap::LOW_ANGLE_DRAW_WIDTH);
+		m_scriptedTerrainDrawSize.y = growScriptedTerrainDrawSize(m_scriptedTerrainDrawSize.y, visibleCells.y, WorldHeightMap::LOW_ANGLE_DRAW_HEIGHT);
+	}
+	const Bool scriptedSizeGrew = !m_isUserControlled
+		&& (m_scriptedTerrainDrawSize.x != previousScriptedSize.x || m_scriptedTerrainDrawSize.y != previousScriptedSize.y);
+	TheTerrainRenderObject->setCenterOnVisibleArea(!m_isUserControlled);
+	const ICoord2D visibleCells = TheTerrainRenderObject->getVisibleAreaSize();
+	const UnsignedInt updateStart = timeGetTime();
 
 	ICoord2D drawSize;
 
@@ -3812,5 +3857,13 @@ void W3DView::updateTerrain()
 	{
 		W3DDisplay::m_3DScene->destroyLightsIterator(it);
 		it = nullptr;
+	}
+
+	if (scriptedSizeGrew)
+	{
+		fprintf(stderr, "[terrain] scripted camera shows %dx%d cells: terrain drawn grows from %dx%d to %dx%d, rebuilt in %u ms\n",
+			visibleCells.x, visibleCells.y, previousScriptedSize.x, previousScriptedSize.y,
+			m_scriptedTerrainDrawSize.x, m_scriptedTerrainDrawSize.y, timeGetTime() - updateStart);
+		fflush(stderr);
 	}
 }

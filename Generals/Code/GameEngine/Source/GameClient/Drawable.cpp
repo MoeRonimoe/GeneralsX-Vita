@@ -425,6 +425,7 @@ Drawable::Drawable( const ThingTemplate *thingTemplate, DrawableStatusBits statu
 	m_hiddenByStealth = false;
 	m_heatVisionOpacity = 0.0f;
 	m_drawableFullyObscuredByShroud = false;
+	m_shroudStatusStale = TRUE;
 
   m_receivesDynamicLights = TRUE; // a good default... overridden by one of my draw modules if at all
 
@@ -899,6 +900,11 @@ void Drawable::allocateShadows()
 //-------------------------------------------------------------------------------------------------
 void Drawable::setFullyObscuredByShroud(Bool fullyObscured)
 {
+	// GeneralsX @performance Claude 13/10/2026 GameClient::update() has the last word on this flag on
+	// every frame; whoever else sets it (GarrisonContain does, for what is inside a building) gets
+	// overruled on the next one. Marking the drawable keeps it that way.
+	m_shroudStatusStale = TRUE;
+
 	if (m_drawableFullyObscuredByShroud != fullyObscured)
 	{
 		for (DrawModule** dm = getDrawModules(); *dm; ++dm)
@@ -1125,10 +1131,10 @@ void Drawable::imitateStealthLook( Drawable& otherDraw )
 //-------------------------------------------------------------------------------------------------
 /** update is called once per frame */
 //-------------------------------------------------------------------------------------------------
-//DECLARE_PERF_TIMER(updateDrawable)
+DECLARE_PERF_TIMER(updateDrawable)
 void Drawable::updateDrawable(Real timeScale)
 {
-	//USE_PERF_TIMER(updateDrawable)
+	USE_PERF_TIMER(updateDrawable)
 
 	UnsignedInt now = TheGameLogic->getFrame();
 	Object *obj = getObject();
@@ -1197,8 +1203,14 @@ void Drawable::updateDrawable(Real timeScale)
 
 		}
 	}
-	else
+	else if (m_decalOpacity != 0)
+	{
+		// GeneralsX @performance Claude 13/10/2026 This runs for every drawable of the map on every
+		// frame, 1900 of them, and nearly all have nothing to update. What is as it should be is
+		// not written again here and below: a write makes the processor carry the memory of every
+		// drawable back out of its cache, which on the PS Vita costs more than the checks do.
 		m_decalOpacity = 0;
+	}
 
 
 	{
@@ -1268,11 +1280,12 @@ void Drawable::updateDrawable(Real timeScale)
 			m_colorTintEnvelope->release(); // head on back to normal, now
 		}
 
+		m_prevTintStatus = m_tintStatus;//for next frame
 	}
 
-	m_prevTintStatus = m_tintStatus;//for next frame
-
-	if ( obj )
+	// GeneralsX @performance Claude 13/10/2026 The object is only asked whether it is dead if there
+	// is a glow to stop; asking reads memory of the object that nothing else here needs.
+	if ( obj && testTintStatus( TINT_STATUS_IRRADIATED ) )
 	{
 		if ( ! obj->isEffectivelyDead() )
 			clearTintStatus( TINT_STATUS_IRRADIATED); // so the res glow stops when not exposed
@@ -2619,10 +2632,13 @@ void Drawable::setStealthLook(StealthLookType look)
 //-------------------------------------------------------------------------------------------------
 void Drawable::draw()
 {
+	// GeneralsX @performance Claude 13/10/2026 Nearly no drawable has this set, and this runs for
+	// every drawable in the view on every frame: what is 0 is not written again, here and below.
 	if ( getObject() && getObject()->isEffectivelyDead() )
 	{
 		//dead folks don't stealth anyway
-		m_heatVisionOpacity = 0.0f;
+		if ( m_heatVisionOpacity != 0.0f )
+			m_heatVisionOpacity = 0.0f;
 	}
 	else if ( m_heatVisionOpacity > VERY_TRANSPARENT_HEATVISION )
 	{
@@ -2634,7 +2650,7 @@ void Drawable::draw()
 		const Real fadeScalar = 1.0f - (1.0f - HEATVISION_FADE_SCALAR) * timeScale;
 		m_heatVisionOpacity *= fadeScalar;
 	}
-	else
+	else if ( m_heatVisionOpacity != 0.0f )
 	{
 		m_heatVisionOpacity = 0.0f;
 	}

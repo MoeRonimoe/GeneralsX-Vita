@@ -838,6 +838,15 @@ Int parseNoLogo(char *args[], int)
 	return 1;
 }
 
+// GeneralsX @feature Claude 14/10/2026 Leaves out the EA logo movie and the wait after it, but plays
+// the intro movie (the sizzle) at startup, unlike -nologo.
+Int parseNoEALogo(char *args[], int)
+{
+	TheWritableGlobalData->m_playIntro = FALSE;
+
+	return 1;
+}
+
 Int parseShellMap(char *args[], int num)
 {
 	if (num > 1)
@@ -1209,6 +1218,7 @@ static CommandLineParam paramsForStartup[] =
 static CommandLineParam paramsForEngineInit[] =
 {
 	{ "-nologo", parseNoLogo }, // TheSuperHackers @tweak Is now available in Release builds.
+	{ "-noEALogo", parseNoEALogo },
 	{ "-noshellmap", parseNoShellMap },
 	{ "-noShellAnim", parseNoWindowAnimation }, // TheSuperHackers @tweak Is now available in Release builds.
 	{ "-xres", parseXRes },

@@ -62,6 +62,38 @@
 #include "hrawanim.h"
 #include "motchan.h"
 #include "ww3d.h"
+#include <string.h>
+
+// GeneralsX @performance Claude 13/10/2026 The two products of matrices that every bone of a model
+// takes on every frame the model moves, a row at a time where the processor has NEON
+// (WWMath/matrix3dneon.h), which gives the same numbers. Elsewhere they are what they were.
+#if defined(__ARM_NEON)
+#include "WWMath/matrix3dneon.h"
+
+static_assert(sizeof(Matrix3D) == 12 * sizeof(float), "matrix3dneon.h reads a matrix as twelve numbers in a row");
+
+// result = a * b
+static inline void Multiply_Pivots(const Matrix3D & a,const Matrix3D & b,Matrix3D * result)
+{
+	Matrix3D_Neon_Multiply(&a[0][0],&b[0][0],&(*result)[0][0]);
+}
+
+// tm = tm * that
+static inline void Post_Multiply_Pivot(Matrix3D & tm,const Matrix3D & that)
+{
+	Matrix3D_Neon_Multiply(&tm[0][0],&that[0][0],&tm[0][0]);
+}
+#else
+static inline void Multiply_Pivots(const Matrix3D & a,const Matrix3D & b,Matrix3D * result)
+{
+	Matrix3D::Multiply(a,b,result);
+}
+
+static inline void Post_Multiply_Pivot(Matrix3D & tm,const Matrix3D & that)
+{
+	tm.postMul(that);
+}
+#endif
 
 /***********************************************************************************************
  * HTreeClass::HTreeClass -- constructor                                                       *
@@ -538,7 +570,7 @@ void HTreeClass::Base_Update(const Matrix3D & root)
 		pivot = &Pivot[piv_idx];
 
 		assert(pivot->Parent != nullptr);
-		Matrix3D::Multiply(pivot->Parent->Transform, pivot->BaseTransform, &(pivot->Transform));
+		Multiply_Pivots(pivot->Parent->Transform, pivot->BaseTransform, &(pivot->Transform));
 		pivot->IsVisible = 1;
 
 		if (pivot->Is_Captured()) pivot->Capture_Update();
@@ -572,7 +604,7 @@ void HTreeClass::Anim_Update(const Matrix3D & root,HAnimClass * motion,float fra
 
 		// base pose
 		assert(pivot->Parent != nullptr);
-		Matrix3D::Multiply(pivot->Parent->Transform, pivot->BaseTransform, &(pivot->Transform));
+		Multiply_Pivots(pivot->Parent->Transform, pivot->BaseTransform, &(pivot->Transform));
 
 		// Don't update this pivot if the HTree doesn't have animation data for it...
 		if (piv_idx < num_anim_pivots) {
@@ -589,7 +621,7 @@ void HTreeClass::Anim_Update(const Matrix3D & root,HAnimClass * motion,float fra
 #ifdef ALLOW_TEMPORARIES
 			pivot->Transform = pivot->Transform * mtx;
 #else
-			pivot->Transform.postMul(mtx);
+			Post_Multiply_Pivot(pivot->Transform,mtx);
 #endif
 
 			// visibility
@@ -640,7 +672,7 @@ void HTreeClass::Anim_Update_Without_Interpolation(const Matrix3D & root,HRawAni
 
 		// base pose
 		assert(pivot->Parent != nullptr);
-		Matrix3D::Multiply(pivot->Parent->Transform, pivot->BaseTransform, &(pivot->Transform));
+		Multiply_Pivots(pivot->Parent->Transform, pivot->BaseTransform, &(pivot->Transform));
 
 		// Don't update this pivot if the HTree doesn't have animation data for it...
 		if (pivot < lastAnimPivot)
@@ -667,7 +699,7 @@ void HTreeClass::Anim_Update_Without_Interpolation(const Matrix3D & root,HRawAni
 #ifdef ALLOW_TEMPORARIES
 				*xform = *xform * ::Build_Matrix3D(q,mtx);
 #else
-				xform->postMul(::Build_Matrix3D(q,mtx));
+				Post_Multiply_Pivot(*xform,::Build_Matrix3D(q,mtx));
 #endif
 			}
 
@@ -1035,7 +1067,11 @@ bool HTreeClass::Is_Bone_Captured(int boneindex) const
 	return Pivot[boneindex].Is_Captured();
 }
 
-void HTreeClass::Control_Bone(int boneindex,const Matrix3D & relative_tm,bool world_space_translation)
+// GeneralsX @performance Claude 13/10/2026 Returns whether the bone was given another transform
+// than it had. The game controls the bones of every turret and every gun barrel on every frame,
+// nearly always with what they have, and a model works out all its bones, parts and bounds again
+// when it is told that a bone changed.
+bool HTreeClass::Control_Bone(int boneindex,const Matrix3D & relative_tm,bool world_space_translation)
 {
 	assert(boneindex >= 0);
 	assert(boneindex < NumPivots);
@@ -1043,13 +1079,20 @@ void HTreeClass::Control_Bone(int boneindex,const Matrix3D & relative_tm,bool wo
 
 #ifdef LAZY_CAP_MTX_ALLOC
 	if (Pivot[boneindex].CapTransformPtr == nullptr)
-		return;
+		return false;
+	if (Pivot[boneindex].WorldSpaceTranslation == world_space_translation
+			&& memcmp(&Pivot[boneindex].CapTransformPtr->Mat,&relative_tm,sizeof(Matrix3D)) == 0)
+		return false;
 	Pivot[boneindex].WorldSpaceTranslation = world_space_translation;
 	Pivot[boneindex].CapTransformPtr->Mat = relative_tm;
 #else
+	if (Pivot[boneindex].WorldSpaceTranslation == world_space_translation
+			&& memcmp(&Pivot[boneindex].CapTransform,&relative_tm,sizeof(Matrix3D)) == 0)
+		return false;
 	Pivot[boneindex].WorldSpaceTranslation = world_space_translation;
 	Pivot[boneindex].CapTransform = relative_tm;
 #endif
+	return true;
 }
 
 void HTreeClass::Get_Bone_Control(int boneindex, Matrix3D & relative_tm) const

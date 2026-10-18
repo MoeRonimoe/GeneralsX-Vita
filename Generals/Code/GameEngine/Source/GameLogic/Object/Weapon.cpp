@@ -2374,7 +2374,7 @@ void Weapon::createLaser( const Object *sourceObj, const Object *victimObj, cons
 
 //-------------------------------------------------------------------------------------------------
 // return true if we auto-reloaded our clip after firing.
-//DECLARE_PERF_TIMER(fireWeapon)
+DECLARE_PERF_TIMER(fireWeapon)
 Bool Weapon::privateFireWeapon(
 	const Object *sourceObj,
 	Object *victimObj,
@@ -2386,7 +2386,7 @@ Bool Weapon::privateFireWeapon(
 )
 {
 	//CRCDEBUG_LOG(("Weapon::privateFireWeapon() for %s", DescribeObject(sourceObj).str()));
-	//USE_PERF_TIMER(fireWeapon)
+	USE_PERF_TIMER(fireWeapon)
 	if (projectileID)
 		*projectileID = INVALID_ID;
 
@@ -2902,6 +2902,7 @@ void Weapon::processRequestAssistance( const Object *requestingObject, Object *v
 	worldPos.x = tmp.X;
 	worldPos.y = tmp.Y;
 	worldPos.z = tmp.Z;
+
 }
 
 //-------------------------------------------------------------------------------------------------

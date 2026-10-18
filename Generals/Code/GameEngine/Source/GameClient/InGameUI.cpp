@@ -1818,10 +1818,10 @@ void InGameUI::preDraw()
 //-------------------------------------------------------------------------------------------------
 /** Update the in game user interface */
 //-------------------------------------------------------------------------------------------------
-//DECLARE_PERF_TIMER(InGameUI_update)
+DECLARE_PERF_TIMER(InGameUI_update)
 void InGameUI::update()
 {
-	//USE_PERF_TIMER(InGameUI_update)
+	USE_PERF_TIMER(InGameUI_update)
 	Int i;
 
 	/// @todo make sure this code gets called even when the UI is not being drawn

@@ -41,6 +41,10 @@ endif()
 
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)  # Ensures only ISO features are used
+if(VITA)
+    # newlib only declares the POSIX API in gnu++ mode.
+    set(CMAKE_CXX_EXTENSIONS ON)
+endif()
 
 if (NOT IS_VS6_BUILD)
     if (MSVC)

@@ -37,6 +37,9 @@ include(cmake/config-vcpkg.cmake)
 # Top level project, doesn't really affect anything.
 project(genzh LANGUAGES C CXX)
 
+# PS Vita: sets UNIX and the platform compile options. No-op for other targets.
+include(cmake/vita.cmake)
+
 # GeneralsX @build BenderAI 10/02/2026
 # Linux port: Make CompatLib headers globally accessible so Core libraries (WWLib, WWMath, etc.)
 # can access platform compatibility types when building for non-Windows platforms
@@ -148,6 +151,11 @@ endif()
 # declare the dependency below.
 if(RTS_BUILD_OPTION_SAGE_PATCH)
     add_subdirectory(Patches/SagePatch)
+endif()
+
+# PS Vita platform layer: Direct3D 8 on vitaGL, input devices, entry point, packaging.
+if(VITA)
+    add_subdirectory(Platform/Vita)
 endif()
 
 # Add main build targets

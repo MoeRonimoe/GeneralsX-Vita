@@ -2718,10 +2718,10 @@ void AIPlayer::doUpgradesAndSkills()
 /**
  * Perform computer-controlled player AI
  */
-//DECLARE_PERF_TIMER(AIPlayer_update)
+DECLARE_PERF_TIMER(AIPlayer_update)
 void AIPlayer::update()
 {
-	//USE_PERF_TIMER(AIPlayer_update)
+	USE_PERF_TIMER(AIPlayer_update)
 
 	doBaseBuilding();		// See if it's time to build another building.
 

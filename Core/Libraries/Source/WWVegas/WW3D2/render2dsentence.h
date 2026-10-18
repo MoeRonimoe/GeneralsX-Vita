@@ -51,7 +51,9 @@
     #if defined(__APPLE__)
         #include <TargetConditionals.h>
     #endif
-    #if !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+    // Platforms without fontconfig (iOS, PS Vita) resolve fonts from the bundled fonts/ directory only.
+    #if !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE) && !defined(__vita__)
+        #define SAGE_USE_FONTCONFIG 1
         #include <fontconfig/fontconfig.h>
     #endif
 #endif

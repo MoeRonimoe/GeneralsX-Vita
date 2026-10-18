@@ -16,6 +16,16 @@
 #include <dirent.h>
 #include <fnmatch.h>
 
+// True if a readdir() entry names a directory. newlib on PS Vita has no d_type; it stores
+// the full SceIoStat of the entry instead.
+inline bool CompatDirentIsDirectory(const struct dirent* entry) {
+#if defined(__vita__)
+  return SCE_S_ISDIR(entry->d_stat.st_mode);
+#else
+  return entry->d_type == DT_DIR;
+#endif
+}
+
 // GeneralsX @TheSuperHackers @build BenderAI 11/02/2026 Windows _mkdir → POSIX mkdir (with default perms)
 inline int _mkdir(const char* path)  {
     return mkdir(path, 0755); // rwxr-xr-x
@@ -191,7 +201,7 @@ inline void* FindFirstFile(const char* pattern, WIN32_FIND_DATA* findData) {
       // Match found
       strncpy(findData->cFileName, handle->entry->d_name, MAX_PATH - 1);
       findData->cFileName[MAX_PATH - 1] = '\0';
-      findData->dwFileAttributes = (handle->entry->d_type == DT_DIR) ? FILE_ATTRIBUTE_DIRECTORY : 0;
+      findData->dwFileAttributes = CompatDirentIsDirectory(handle->entry) ? FILE_ATTRIBUTE_DIRECTORY : 0;
       return handle;
     }
 
@@ -216,7 +226,7 @@ inline int FindNextFile(void* hFindFile, WIN32_FIND_DATA* findData) {
     if (fnmatch(handle->pattern, handle->entry->d_name, 0) == 0) {
       strncpy(findData->cFileName, handle->entry->d_name, MAX_PATH - 1);
       findData->cFileName[MAX_PATH - 1] = '\0';
-      findData->dwFileAttributes = (handle->entry->d_type == DT_DIR) ? FILE_ATTRIBUTE_DIRECTORY : 0;
+      findData->dwFileAttributes = CompatDirentIsDirectory(handle->entry) ? FILE_ATTRIBUTE_DIRECTORY : 0;
       return 1; // TRUE
     }
 

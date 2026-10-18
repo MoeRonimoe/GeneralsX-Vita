@@ -73,6 +73,7 @@ set(WW3D2_SRC
     font3d.h
     formconv.cpp
     formconv.h
+    frameprofile.h
     # GeneralsX @build fbraz 10/02/2026 BenderAI - FramGrab uses Windows-only VFW/AVI APIs (Phase 3 out-of-scope)
     #FramGrab.cpp
     #framgrab.h
@@ -253,6 +254,9 @@ target_sources(corei_ww3d2 INTERFACE ${WW3D2_SRC})
 target_compile_definitions(corei_ww3d2 INTERFACE
     $<$<PLATFORM_ID:Linux,Darwin>:SAGE_USE_FREETYPE>
 )
+if(VITA)
+    target_compile_definitions(corei_ww3d2 INTERFACE SAGE_USE_FREETYPE)
+endif()
 
 target_include_directories(corei_ww3d2 INTERFACE
     "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -265,7 +269,12 @@ if (MSVC AND NOT IS_VS6_BUILD)
 endif()
 
 # GeneralsX @build fbraz 11/02/2026 BenderAI - FreeType2 for Unix text rendering (Linux + macOS Phase 5)
-if(UNIX)
+if(VITA)
+    # VitaSDK has FreeType but no fontconfig: fonts come from the fonts/ directory next to
+    # the game data. The static FreeType archive needs its decoders listed explicitly.
+    find_package(Freetype REQUIRED)
+    target_link_libraries(corei_ww3d2 INTERFACE Freetype::Freetype png16 bz2 z)
+elseif(UNIX)
     find_package(Freetype REQUIRED)
     # GeneralsX @build felipebraz 20/06/2025 fontconfig needed on macOS too (render2dsentence.cpp uses Locate_Font_FontConfig)
     find_package(Fontconfig REQUIRED)

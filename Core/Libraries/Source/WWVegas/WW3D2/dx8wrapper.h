@@ -353,6 +353,11 @@ public:
 	static void Set_DX8_Texture(unsigned int stage, IDirect3DBaseTexture8* texture);
 	static void Set_Light_Environment(LightEnvironmentClass* light_env);
 	static LightEnvironmentClass* Get_Light_Environment() { return Light_Environment; }
+
+	// GeneralsX @performance Claude 13/10/2026 How many lights of the render state are those of the
+	// light environment set last, or -1 if something else has set a light since. See
+	// Set_Light_Environment().
+	static int								EnvironmentLightCount;
 	static void Set_Fog(bool enable, const Vector3 &color, float start, float end);
 
 	static WWINLINE const D3DLIGHT8& Peek_Light(unsigned index);
@@ -1411,6 +1416,7 @@ WWINLINE void DX8Wrapper::Set_Render_State(const RenderStateStruct& state)
 
 	render_state=state;
 	render_state_changed=0xffffffff;
+	EnvironmentLightCount=-1;
 
 	if (render_state.index_buffer) {
 		render_state.index_buffer->Add_Engine_Ref();

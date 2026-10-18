@@ -75,14 +75,20 @@ target_include_directories(g_generals PRIVATE
     ${CMAKE_BINARY_DIR}/Code/Libraries
 )
 
-target_sources(g_generals PRIVATE
-    $<$<BOOL:${WIN32}>:WinMain.cpp>
-    $<$<BOOL:${WIN32}>:WinMain.h>
-    # Linux SDL3 entry point
-    $<$<NOT:$<BOOL:${WIN32}>>:SDL3Main.cpp>
-    # Linux stubs
-    $<$<NOT:$<BOOL:${WIN32}>>:LinuxStubs.cpp>
-)
+if(VITA)
+    # PS Vita entry point and stubs come from the vita_main interface library (Platform/Vita).
+    target_link_libraries(g_generals PRIVATE vita_main)
+    vita_package(g_generals "C&C Generals")
+else()
+    target_sources(g_generals PRIVATE
+        $<$<BOOL:${WIN32}>:WinMain.cpp>
+        $<$<BOOL:${WIN32}>:WinMain.h>
+        # Linux SDL3 entry point
+        $<$<NOT:$<BOOL:${WIN32}>>:SDL3Main.cpp>
+        # Linux stubs
+        $<$<NOT:$<BOOL:${WIN32}>>:LinuxStubs.cpp>
+    )
+endif()
 
 # RC files are optional for MinGW builds
 # Icon: LoadIcon() handles missing resource gracefully (uses default system icon)

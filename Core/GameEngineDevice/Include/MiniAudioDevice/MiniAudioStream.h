@@ -67,5 +67,6 @@ protected:
     bool m_playing;
     bool m_soundCreated;
     size_t m_readCursor;
+    float m_volume; ///< GeneralsX @bugfix Claude 15/10/2026 Also for a sound that is created later
 };
 

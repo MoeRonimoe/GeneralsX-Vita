@@ -1,0 +1,557 @@
+diff --git a/source/ffp.c b/source/ffp.c
+index bdbecf0..6189385 100644
+--- a/source/ffp.c
++++ b/source/ffp.c
+@@ -302,37 +302,50 @@ typedef union {
+ 		uint64_t fast_perspective_correction : 1; // Frag/Vert
+ 		uint64_t srgb_mode : 1; // Frag
+ 		uint64_t lighting : 1; // Frag/Vert
+-		uint64_t UNUSED : 28;
++		uint64_t texgen0 : 2; // Vert
++		uint64_t texgen1 : 2; // Vert
++		uint64_t texgen2 : 2; // Vert
++		uint64_t UNUSED : 22;
+ 	};
+ 	uint64_t raw;
+ } shader_mask;
+-#define VERTEX_SHADER_MASK   (0b0000000000000000000000000000101011111100011000000111111100111000)
++#define VERTEX_SHADER_MASK   (0b0000000000000000000000111111101011111100011000000111111100111000)
+ #define FRAGMENT_SHADER_MASK (0b0000000000000000000000000000111100000011101111111111100011111111)
+ #else
+ typedef union {
+ 	struct {
+-		uint32_t alpha_test_mode : 3; // Frag
+-		uint32_t num_textures : 2; // Frag/Vert
+-		uint32_t has_colors : 1; // Frag/Vert
+-		uint32_t fog_mode : 2; // Frag
+-		uint32_t clip_planes_num : 3; // Vert
+-		uint32_t lights_num : 4; // Frag/Vert
+-		uint32_t tex_env_mode_pass0 : 3; // Frag
+-		uint32_t tex_env_mode_pass1 : 3; // Frag
+-		uint32_t shading_mode : 1; // Frag/Vert
+-		uint32_t normalize : 1; // Vert
+-		uint32_t fixed_mask : 3; // Vert
+-		uint32_t pos_fixed_mask : 2; // Vert
+-		uint32_t point_sprite : 1; // Frag
+-		uint32_t fast_perspective_correction : 1; // Frag/Vert
+-		uint32_t srgb_mode : 1; // Frag
+-		uint32_t lighting : 1; // Frag/Vert
++		uint64_t alpha_test_mode : 3; // Frag
++		uint64_t num_textures : 2; // Frag/Vert
++		uint64_t has_colors : 1; // Frag/Vert
++		uint64_t fog_mode : 2; // Frag
++		uint64_t clip_planes_num : 3; // Vert
++		uint64_t lights_num : 4; // Frag/Vert
++		uint64_t tex_env_mode_pass0 : 3; // Frag
++		uint64_t tex_env_mode_pass1 : 3; // Frag
++		uint64_t shading_mode : 1; // Frag/Vert
++		uint64_t normalize : 1; // Vert
++		uint64_t fixed_mask : 3; // Vert
++		uint64_t pos_fixed_mask : 2; // Vert
++		uint64_t point_sprite : 1; // Frag
++		uint64_t fast_perspective_correction : 1; // Frag/Vert
++		uint64_t srgb_mode : 1; // Frag
++		uint64_t lighting : 1; // Frag/Vert
++		uint64_t texgen0 : 2; // Vert
++		uint64_t texgen1 : 2; // Vert
++		uint64_t UNUSED : 28;
+ 	};
+-	uint32_t raw;
++	uint64_t raw;
+ } shader_mask;
+-#define VERTEX_SHADER_MASK   (0b10101111111000000111111100111000)
++#define VERTEX_SHADER_MASK   (0b111110101111111000000111111100111000)
+ #define FRAGMENT_SHADER_MASK (0b11110000001111111111100011111111)
+ #endif
++// Whether texture coordinates are generated from normals, which takes the normal matrix
++#ifdef HAVE_HIGH_FFP_TEXUNITS
++#define texgen_uses_normals(m) ((m).texgen0 >= TEXCOORD_GEN_EYE_NORMAL || (m).texgen1 >= TEXCOORD_GEN_EYE_NORMAL || (m).texgen2 >= TEXCOORD_GEN_EYE_NORMAL)
++#else
++#define texgen_uses_normals(m) ((m).texgen0 >= TEXCOORD_GEN_EYE_NORMAL || (m).texgen1 >= TEXCOORD_GEN_EYE_NORMAL)
++#endif
++
+ #ifndef DISABLE_TEXTURE_COMBINER
+ typedef union {
+ 	struct {
+@@ -639,6 +652,7 @@ uint8_t reload_ffp_shaders(SceGxmVertexAttribute *attrs, SceGxmVertexStream *str
+ 			switch (i - base_texture_id) {
+ 			case 0:
+ 				mask.tex_env_mode_pass0 = texture_units[base_texture_id].env_mode;
++				mask.texgen0 = texture_units[base_texture_id].coord_gen;
+ #ifndef DISABLE_TEXTURE_COMBINER
+ 				if (mask.tex_env_mode_pass0 == COMBINE)
+ 					cmb_mask.pass0.raw = texture_units[base_texture_id].combiner.raw;
+@@ -646,6 +660,7 @@ uint8_t reload_ffp_shaders(SceGxmVertexAttribute *attrs, SceGxmVertexStream *str
+ 				break;
+ 			case 1:
+ 				mask.tex_env_mode_pass1 = texture_units[base_texture_id + 1].env_mode;
++				mask.texgen1 = texture_units[base_texture_id + 1].coord_gen;
+ #ifndef DISABLE_TEXTURE_COMBINER
+ 				if (mask.tex_env_mode_pass1 == COMBINE)
+ 					cmb_mask.pass1.raw = texture_units[base_texture_id + 1].combiner.raw;
+@@ -654,6 +669,7 @@ uint8_t reload_ffp_shaders(SceGxmVertexAttribute *attrs, SceGxmVertexStream *str
+ #ifdef HAVE_HIGH_FFP_TEXUNITS
+ 			case 2:
+ 				mask.tex_env_mode_pass2 = texture_units[base_texture_id + 2].env_mode;
++				mask.texgen2 = texture_units[base_texture_id + 2].coord_gen;
+ #ifndef DISABLE_TEXTURE_COMBINER
+ 				if (mask.tex_env_mode_pass2 == COMBINE)
+ 					cmb_mask.pass2.raw = texture_units[base_texture_id + 2].combiner.raw;
+@@ -734,8 +750,8 @@ uint8_t reload_ffp_shaders(SceGxmVertexAttribute *attrs, SceGxmVertexStream *str
+ 	uint64_t vert_shader_mask = mask.raw & VERTEX_SHADER_MASK;
+ 	uint64_t frag_shader_mask = mask.raw & FRAGMENT_SHADER_MASK;
+ #else
+-	uint32_t vert_shader_mask = mask.raw & VERTEX_SHADER_MASK;
+-	uint32_t frag_shader_mask = mask.raw & FRAGMENT_SHADER_MASK;
++	uint64_t vert_shader_mask = mask.raw & VERTEX_SHADER_MASK;
++	uint64_t frag_shader_mask = mask.raw & FRAGMENT_SHADER_MASK;
+ #endif
+ 	
+ #ifdef DISABLE_TEXTURE_COMBINER
+@@ -813,9 +829,9 @@ uint8_t reload_ffp_shaders(SceGxmVertexAttribute *attrs, SceGxmVertexStream *str
+ 	if (ffp_dirty_vert) {
+ 		char fname[256];
+ #ifdef HAVE_HIGH_FFP_TEXUNITS
+-		sprintf(fname, "ux0:data/shader_cache/v%d/v/%016llX-%d.gxp", FFP_SHADER_CACHE_MAGIC, vert_shader_mask, WVP_ON_GPU);
++		sprintf(fname, "%s/v/%016llX-%d.gxp", ffp_shader_cache_path, vert_shader_mask, WVP_ON_GPU);
+ #else
+-		sprintf(fname, "ux0:data/shader_cache/v%d/v/%08X-%d.gxp", FFP_SHADER_CACHE_MAGIC, vert_shader_mask, WVP_ON_GPU);
++		sprintf(fname, "%s/v/%016llX-%d.gxp", ffp_shader_cache_path, vert_shader_mask, WVP_ON_GPU);
+ #endif
+ 		SceUID f = sceIoOpen(fname, SCE_O_RDONLY, 0777);
+ 		if (f >= 0) {
+@@ -831,8 +847,12 @@ uint8_t reload_ffp_shaders(SceGxmVertexAttribute *attrs, SceGxmVertexStream *str
+ 				start_shader_compiler();
+ 
+ 			// Compiling the new shader
+-			char vshader[8192];
+-			sprintf(vshader, ffp_vert_src, mask.clip_planes_num, mask.num_textures, mask.has_colors, mask.lights_num, mask.lighting, mask.shading_mode, mask.normalize, mask.fixed_mask, mask.pos_fixed_mask, WVP_ON_GPU, mask.fast_perspective_correction);
++			char vshader[16384];
++#ifdef HAVE_HIGH_FFP_TEXUNITS
++			sprintf(vshader, ffp_vert_src, mask.clip_planes_num, mask.num_textures, mask.has_colors, mask.lights_num, mask.lighting, mask.shading_mode, mask.normalize, mask.fixed_mask, mask.pos_fixed_mask, WVP_ON_GPU, mask.fast_perspective_correction, (int)mask.texgen0, (int)mask.texgen1, (int)mask.texgen2);
++#else
++			sprintf(vshader, ffp_vert_src, mask.clip_planes_num, mask.num_textures, mask.has_colors, mask.lights_num, mask.lighting, mask.shading_mode, mask.normalize, mask.fixed_mask, mask.pos_fixed_mask, WVP_ON_GPU, mask.fast_perspective_correction, (int)mask.texgen0, (int)mask.texgen1);
++#endif
+ 			uint32_t size = strlen(vshader);
+ 			SceGxmProgram *t = shark_compile_shader_extended(vshader, &size, SHARK_VERTEX_SHADER, compiler_opts, compiler_fastmath, compiler_fastprecision, compiler_fastint);
+ 			ffp_vertex_program = (SceGxmProgram *)vglMalloc(size);
+@@ -1034,15 +1054,15 @@ uint8_t reload_ffp_shaders(SceGxmVertexAttribute *attrs, SceGxmVertexStream *str
+ 		char fname[256];
+ #ifndef DISABLE_TEXTURE_COMBINER
+ #ifdef HAVE_HIGH_FFP_TEXUNITS
+-		sprintf(fname, "ux0:data/shader_cache/v%d/f/%016llX-%016llX-%08X.gxp", FFP_SHADER_CACHE_MAGIC, frag_shader_mask, cmb_mask.raw_high, cmb_mask.raw_low);
++		sprintf(fname, "%s/f/%016llX-%016llX-%08X.gxp", ffp_shader_cache_path, frag_shader_mask, cmb_mask.raw_high, cmb_mask.raw_low);
+ #else
+-		sprintf(fname, "ux0:data/shader_cache/v%d/f/%08X-%016llX.gxp", FFP_SHADER_CACHE_MAGIC, frag_shader_mask, cmb_mask.raw);
++		sprintf(fname, "%s/f/%016llX-%016llX.gxp", ffp_shader_cache_path, frag_shader_mask, cmb_mask.raw);
+ #endif
+ #else
+ #ifdef HAVE_HIGH_FFP_TEXUNITS
+-		sprintf(fname, "ux0:data/shader_cache/v%d/f/%016llX-0000000000000000.gxp", FFP_SHADER_CACHE_MAGIC, frag_shader_mask);
++		sprintf(fname, "%s/f/%016llX-0000000000000000.gxp", ffp_shader_cache_path, frag_shader_mask);
+ #else
+-		sprintf(fname, "ux0:data/shader_cache/v%d/f/%08X-0000000000000000.gxp", FFP_SHADER_CACHE_MAGIC, frag_shader_mask);
++		sprintf(fname, "%s/f/%016llX-0000000000000000.gxp", ffp_shader_cache_path, frag_shader_mask);
+ #endif
+ #endif
+ 		SceUID f = sceIoOpen(fname, SCE_O_RDONLY, 0777);
+@@ -1189,7 +1209,7 @@ uint8_t reload_ffp_shaders(SceGxmVertexAttribute *attrs, SceGxmVertexStream *str
+ 		matrix4x4_multiply(vgl_mvp_matrix, projection_matrix, modelview_matrix);
+ #endif
+ 		// Recalculating normal matrix if necessary (TODO: This should be recalculated only when MV changes)
+-		if (mask.lighting) {
++		if (mask.lighting || texgen_uses_normals(mask)) {
+ 			recalculate_normal_matrix();
+ 		}
+ 
+@@ -2048,6 +2068,29 @@ void glTexCoordPointer(GLint size, GLenum type, GLsizei stride, const GLvoid *po
+ 	streams->stride = stride ? stride : bpe * size;
+ }
+ 
++void vglTexCoordGen(GLenum mode) {
++	THREAD_SAFE()
++
++	uint8_t coord_gen;
++	switch (mode) {
++	case GL_NONE:
++		coord_gen = TEXCOORD_GEN_NONE;
++		break;
++	case VGL_TEXCOORD_GEN_EYE_POSITION:
++		coord_gen = TEXCOORD_GEN_EYE_POSITION;
++		break;
++	case VGL_TEXCOORD_GEN_EYE_NORMAL:
++		coord_gen = TEXCOORD_GEN_EYE_NORMAL;
++		break;
++	case VGL_TEXCOORD_GEN_EYE_REFLECTION:
++		coord_gen = TEXCOORD_GEN_EYE_REFLECTION;
++		break;
++	default:
++		SET_GL_ERROR_WITH_VALUE(GL_INVALID_ENUM, mode)
++	}
++	texture_units[server_texture_unit].coord_gen = coord_gen;
++}
++
+ void glInterleavedArrays(GLenum format, GLsizei stride, const void *pointer) {
+ 	THREAD_SAFE()
+ 
+diff --git a/source/shaders/ffp_ext_v.h b/source/shaders/ffp_ext_v.h
+index 4308435..5cb9474 100644
+--- a/source/shaders/ffp_ext_v.h
++++ b/source/shaders/ffp_ext_v.h
+@@ -18,6 +18,9 @@ R"(#define clip_planes_num %d
+ #define fixed_mode_pos %d
+ #define calculate_wvp %d
+ #define interp %d
++#define texgen0 %d
++#define texgen1 %d
++#define texgen2 %d
+ 
+ #if interp == 1
+ #define TEXCOORD0 TEXCOORD0_HALF
+@@ -86,14 +89,49 @@ void calculate_light(short i, float3 ecPosition, float3 N, float4 inout Ambient,
+ }
+ #endif
+ 
++#if texgen0 != 0 || texgen1 != 0 || texgen2 != 0
++// Texture coordinates of vglTexCoordGen from the vector v of the coordinate array
++float3 generate_texcoord(int mode, float3 v, float4x4 modelview, float3x3 normal_mat, float4 eye_position) {
++	float3 result;
++	if (mode == 1) { // VGL_TEXCOORD_GEN_EYE_POSITION
++		result = mul(modelview, float4(v, 1.f)).xyz;
++	} else {
++#if normalization == 1
++		float3 normal = normalize(mul(normal_mat, v));
++#else
++		float3 normal = mul(normal_mat, v);
++#endif
++		if (mode == 2) { // VGL_TEXCOORD_GEN_EYE_NORMAL
++			result = normal;
++		} else { // VGL_TEXCOORD_GEN_EYE_REFLECTION
++			float3 incident = normalize(eye_position.xyz / eye_position.w);
++			result = incident - 2.f * dot(normal, incident) * normal;
++		}
++	}
++	return result;
++}
++#endif
++
+ void main(
+ 	float4 Nposition,
+ #if num_textures > 0
++#if texgen0 == 0
+ 	float2 Otexcoord0,
++#else
++	float3 Otexcoord0,
++#endif
+ #if num_textures > 1
++#if texgen1 == 0
+ 	float2 Utexcoord1,
++#else
++	float3 Utexcoord1,
++#endif
+ #if num_textures > 2
++#if texgen2 == 0
+ 	float2 Vtexcoord2,
++#else
++	float3 Vtexcoord2,
++#endif
+ #endif
+ #endif
+ #endif
+@@ -140,7 +178,7 @@ void main(
+ 	float out vClip[clip_planes_num] : CLP0,
+ 	uniform float4 Hclip_planes_eq[clip_planes_num],
+ #endif
+-#if clip_planes_num > 0 || lighting == 1 || calculate_wvp == 1
++#if clip_planes_num > 0 || lighting == 1 || calculate_wvp == 1 || texgen0 != 0 || texgen1 != 0 || texgen2 != 0
+ 	uniform float4x4 Imodelview,
+ #endif
+ 	uniform float4x4 Jwvp,
+@@ -162,7 +200,7 @@ void main(
+ #if calculate_wvp == 1
+ 	Jwvp = mul(Jwvp, Imodelview); // Jwvp is actually the proj matrix
+ #endif
+-#if clip_planes_num > 0 || lighting == 1
++#if clip_planes_num > 0 || lighting == 1 || texgen0 != 0 || texgen1 != 0 || texgen2 != 0
+ 	float4 modelpos = mul(Imodelview, Nposition);
+ #endif
+ 	// User clip planes
+@@ -197,20 +235,41 @@ void main(
+ #endif
+ 
+ #if num_textures > 0
++#if texgen0 == 0
+ #if (fixed_mode_mask & 0x02) == 0x02
+ 	Otexcoord0 = GLFixed2ToFloat2(Otexcoord0);
+ #endif
+ 	vTexcoord = mul(Ktexmat[0], float4(Otexcoord0, 0.f, 1.f)).xy;
++#else
++#if (fixed_mode_mask & 0x02) == 0x02
++	Otexcoord0 = GLFixed3ToFloat3(Otexcoord0);
++#endif
++	vTexcoord = mul(Ktexmat[0], float4(generate_texcoord(texgen0, Otexcoord0, Imodelview, Lnormal_mat, modelpos), 1.f)).xy;
++#endif
+ #if num_textures > 1
++#if texgen1 == 0
+ #if (fixed_mode_mask & 0x04) == 0x04
+ 	Utexcoord1 = GLFixed2ToFloat2(Utexcoord1);
+ #endif
+ 	vTexcoord2 = mul(Ktexmat[1], float4(Utexcoord1, 0.f, 1.f)).xy;
++#else
++#if (fixed_mode_mask & 0x04) == 0x04
++	Utexcoord1 = GLFixed3ToFloat3(Utexcoord1);
++#endif
++	vTexcoord2 = mul(Ktexmat[1], float4(generate_texcoord(texgen1, Utexcoord1, Imodelview, Lnormal_mat, modelpos), 1.f)).xy;
++#endif
+ #if num_textures > 2
++#if texgen2 == 0
+ #if (fixed_mode_mask & 0x08) == 0x08
+ 	Vtexcoord2 = GLFixed2ToFloat2(Vtexcoord2);
+ #endif
+ 	vTexcoord3 = mul(Ktexmat[2], float4(Vtexcoord2, 0.f, 1.f)).xy;
++#else
++#if (fixed_mode_mask & 0x08) == 0x08
++	Vtexcoord2 = GLFixed3ToFloat3(Vtexcoord2);
++#endif
++	vTexcoord3 = mul(Ktexmat[2], float4(generate_texcoord(texgen2, Vtexcoord2, Imodelview, Lnormal_mat, modelpos), 1.f)).xy;
++#endif
+ #endif
+ #endif
+ #endif
+diff --git a/source/shaders/ffp_v.h b/source/shaders/ffp_v.h
+index 2ba19d0..d4b4294 100644
+--- a/source/shaders/ffp_v.h
++++ b/source/shaders/ffp_v.h
+@@ -17,6 +17,8 @@ R"(#define clip_planes_num %d
+ #define fixed_mode_pos %d
+ #define calculate_wvp %d
+ #define interp %d
++#define texgen0 %d
++#define texgen1 %d
+ 
+ #if interp == 1
+ #define TEXCOORD0 TEXCOORD0_HALF
+@@ -84,12 +86,43 @@ void calculate_light(short i, float3 ecPosition, float3 N, float4 inout Ambient,
+ }
+ #endif
+ 
++#if texgen0 != 0 || texgen1 != 0
++// Texture coordinates of vglTexCoordGen from the vector v of the coordinate array
++float3 generate_texcoord(int mode, float3 v, float4x4 modelview, float3x3 normal_mat, float4 eye_position) {
++	float3 result;
++	if (mode == 1) { // VGL_TEXCOORD_GEN_EYE_POSITION
++		result = mul(modelview, float4(v, 1.f)).xyz;
++	} else {
++#if normalization == 1
++		float3 normal = normalize(mul(normal_mat, v));
++#else
++		float3 normal = mul(normal_mat, v);
++#endif
++		if (mode == 2) { // VGL_TEXCOORD_GEN_EYE_NORMAL
++			result = normal;
++		} else { // VGL_TEXCOORD_GEN_EYE_REFLECTION
++			float3 incident = normalize(eye_position.xyz / eye_position.w);
++			result = incident - 2.f * dot(normal, incident) * normal;
++		}
++	}
++	return result;
++}
++#endif
++
+ void main(
+ 	float4 Nposition,
+ #if num_textures > 0
++#if texgen0 == 0
+ 	float2 Otexcoord0,
++#else
++	float3 Otexcoord0,
++#endif
+ #if num_textures > 1
++#if texgen1 == 0
+ 	float2 Utexcoord1,
++#else
++	float3 Utexcoord1,
++#endif
+ #endif
+ #endif
+ #if has_colors == 1 || lighting == 1
+@@ -132,7 +165,7 @@ void main(
+ 	float out vClip[clip_planes_num] : CLP0,
+ 	uniform float4 Hclip_planes_eq[clip_planes_num],
+ #endif
+-#if clip_planes_num > 0 || lighting == 1 || calculate_wvp == 1
++#if clip_planes_num > 0 || lighting == 1 || calculate_wvp == 1 || texgen0 != 0 || texgen1 != 0
+ 	uniform float4x4 Imodelview,
+ #endif
+ 	uniform float4x4 Jwvp,
+@@ -154,7 +187,7 @@ void main(
+ #if calculate_wvp == 1
+ 	Jwvp = mul(Jwvp, Imodelview); // Jwvp is actually the proj matrix
+ #endif
+-#if clip_planes_num > 0 || lighting == 1
++#if clip_planes_num > 0 || lighting == 1 || texgen0 != 0 || texgen1 != 0
+ 	float4 modelpos = mul(Imodelview, Nposition);
+ #endif	
+ 	// User clip planes
+@@ -189,15 +222,29 @@ void main(
+ #endif
+ 
+ #if num_textures > 0
++#if texgen0 == 0
+ #if (fixed_mode_mask & 0x02) == 0x02
+ 	Otexcoord0 = GLFixed2ToFloat2(Otexcoord0);
+ #endif
+ 	vTexcoord = mul(Ktexmat[0], float4(Otexcoord0, 0.f, 1.f)).xy;
++#else
++#if (fixed_mode_mask & 0x02) == 0x02
++	Otexcoord0 = GLFixed3ToFloat3(Otexcoord0);
++#endif
++	vTexcoord = mul(Ktexmat[0], float4(generate_texcoord(texgen0, Otexcoord0, Imodelview, Lnormal_mat, modelpos), 1.f)).xy;
++#endif
+ #if num_textures > 1
++#if texgen1 == 0
+ #if (fixed_mode_mask & 0x04) == 0x04
+ 	Utexcoord1 = GLFixed2ToFloat2(Utexcoord1);
+ #endif
+ 	vTexcoord2 = mul(Ktexmat[1], float4(Utexcoord1, 0.f, 1.f)).xy;
++#else
++#if (fixed_mode_mask & 0x04) == 0x04
++	Utexcoord1 = GLFixed3ToFloat3(Utexcoord1);
++#endif
++	vTexcoord2 = mul(Ktexmat[1], float4(generate_texcoord(texgen1, Utexcoord1, Imodelview, Lnormal_mat, modelpos), 1.f)).xy;
++#endif
+ #endif
+ #endif
+ #if lighting == 1
+diff --git a/source/shared.h b/source/shared.h
+index 81251be..cbacdc3 100644
+--- a/source/shared.h
++++ b/source/shared.h
+@@ -299,6 +299,8 @@ extern int NEW_DISPLAY_HEIGHT; // Requested new display height in pixels
+ 
+ // Fixed-function pipeline shader cache settings
+ #define FFP_SHADER_CACHE_MAGIC 31 // This must be increased whenever ffp shader sources or shader mask/combiner mask changes
++#define FFP_SHADER_CACHE_PATCH 1 // GeneralsX: revision of its changes to the ffp shaders, increased whenever they change
++extern char ffp_shader_cache_path[256]; // Folder of the compiled ffp shaders
+ 
+ // Custom shaders pipeline shader cache settings
+ #ifdef HAVE_SHADER_CACHE
+@@ -572,6 +574,14 @@ typedef union {
+ 	uint32_t raw;
+ } combiner_state;
+ 
++// Texture coordinates generation modes of vglTexCoordGen, as kept in the ffp shader mask
++enum {
++	TEXCOORD_GEN_NONE,
++	TEXCOORD_GEN_EYE_POSITION,
++	TEXCOORD_GEN_EYE_NORMAL,
++	TEXCOORD_GEN_EYE_REFLECTION
++};
++
+ // Texture unit struct
+ typedef struct {
+ 	uint8_t state;
+@@ -579,6 +589,7 @@ typedef struct {
+ 	uint8_t env_mode;
+ 	matrix4x4 texture_matrix_stack[GENERIC_STACK_DEPTH];
+ 	combiner_state combiner;
++	uint8_t coord_gen; // Texture coordinates generation mode of vglTexCoordGen (TEXCOORD_GEN_*)
+ 	vector4f env_color;
+ 	float rgb_scale;
+ 	float a_scale;
+diff --git a/source/vgl.c b/source/vgl.c
+index 1dbfe7b..8782081 100644
+--- a/source/vgl.c
++++ b/source/vgl.c
+@@ -32,6 +32,8 @@ void *gpu_alloc_mapped_aligned_unsafe_for_cpu(size_t alignment, size_t size);
+ #ifdef HAVE_SHADER_CACHE
+ static char shader_cache_root[128] = {};
+ #endif
++static char ffp_shader_cache_root[128] = "ux0:data/shader_cache";
++char ffp_shader_cache_path[256];
+ 
+ #ifdef HAVE_PROFILING
+ size_t max_vcache_size = 0;
+@@ -190,13 +192,15 @@ GLboolean vglInitWithCustomSizes(int pool_size, int width, int height, int ram_p
+ 	sprintf(vgl_file_cache_path, "ux0:data/vgl_cache/%s", titleid);
+ 	sceIoMkdir(vgl_file_cache_path, 0777);
+ #endif
+-	sceIoMkdir("ux0:data/shader_cache", 0777);
++	// The ffp shaders of this patched vitaGL are kept apart from those of the original one,
++	// which other applications share in the default folder.
++	sceIoMkdir(ffp_shader_cache_root, 0777);
++	sprintf(ffp_shader_cache_path, "%s/v%d-generalsx%d", ffp_shader_cache_root, FFP_SHADER_CACHE_MAGIC, FFP_SHADER_CACHE_PATCH);
++	sceIoMkdir(ffp_shader_cache_path, 0777);
+ 	char fname[256];
+-	sprintf(fname, "ux0:data/shader_cache/v%d", FFP_SHADER_CACHE_MAGIC);
++	sprintf(fname, "%s/v", ffp_shader_cache_path);
+ 	sceIoMkdir(fname, 0777);
+-	sprintf(fname, "ux0:data/shader_cache/v%d/v", FFP_SHADER_CACHE_MAGIC);
+-	sceIoMkdir(fname, 0777);
+-	sprintf(fname, "ux0:data/shader_cache/v%d/f", FFP_SHADER_CACHE_MAGIC);
++	sprintf(fname, "%s/f", ffp_shader_cache_path);
+ 	sceIoMkdir(fname, 0777);
+ #ifdef HAVE_SHADER_CACHE
+ 	if (!shader_cache_root[0])
+@@ -349,6 +353,7 @@ GLboolean vglInitWithCustomSizes(int pool_size, int width, int height, int ram_p
+ 		texture_units[i].tex_id[1] = 0;
+ 		texture_units[i].tex_id[2] = 0;
+ 		texture_units[i].state = 0;
++		texture_units[i].coord_gen = TEXCOORD_GEN_NONE;
+ 		texture_units[i].texture_stack_counter = 0;
+ #ifndef DISABLE_TEXTURE_COMBINER
+ 		texture_units[i].combiner.rgb_func = MODULATE;
+@@ -780,6 +785,10 @@ void vglPhycontMemLazyInit(size_t size) {
+ #endif
+ }
+ 
++void vglSetFfpShaderCachePath(const char *path) {
++	snprintf(ffp_shader_cache_root, sizeof(ffp_shader_cache_root), "%s", path);
++}
++
+ void vglSetShaderCachePath(const char *path) {
+ #ifdef HAVE_SHADER_CACHE
+ 	strcpy(shader_cache_root, path);
+diff --git a/source/vitaGL.h b/source/vitaGL.h
+index 0b74834..70c5165 100644
+--- a/source/vitaGL.h
++++ b/source/vitaGL.h
+@@ -565,6 +565,11 @@ extern "C" {
+ #define VGL_YUV420P_BT709                              0x18E76
+ #define VGL_YVU420P_BT709                              0x18E77
+ 
++// Modes of vglTexCoordGen.
++#define VGL_TEXCOORD_GEN_EYE_POSITION                  0x18F00
++#define VGL_TEXCOORD_GEN_EYE_NORMAL                    0x18F01
++#define VGL_TEXCOORD_GEN_EYE_REFLECTION                0x18F02
++
+ #define EGL_SUCCESS                                     0x3000
+ #define EGL_BAD_ATTRIBUTE                               0x3004
+ #define EGL_BAD_CONTEXT                                 0x3006
+@@ -1262,6 +1267,9 @@ void vglSetShaderAssociationPath(const char *path);
+ // Overloads the shader cache path when HAVE_SHADER_CACHE=1 is used. Must be called before vglInit*. Default value: ux0:data/shader_cache.
+ void vglSetShaderCachePath(const char *path);
+ 
++// Sets the folder in which the compiled fixed function pipeline shaders are kept. Must be called before vglInit*. Default value: ux0:data/shader_cache.
++void vglSetFfpShaderCachePath(const char *path);
++
+ // Change the lifetime for a texture to be considered cacheable. Requires HAVE_TEXTURE_CACHE.
+ void vglSetTextureCacheFrequency(GLuint freq);
+ 
+@@ -1301,6 +1309,16 @@ void vglSwapBuffers(GLboolean has_commondialog);
+ // Enqueue a request for display resolution change that will happen at next vglSwapBuffers call.
+ GLboolean vglSwapResolution(int width, int height);
+ 
++// Makes the fixed function pipeline compute the texture coordinates of the active texture unit, as Direct3D's
++// D3DTSS_TCI_CAMERASPACE* modes do. The unit's texture coordinate array is read as an object space vector of
++// three components, taken to eye space and, with 1 as fourth component, through the texture matrix:
++// VGL_TEXCOORD_GEN_EYE_POSITION: the array holds positions, the result is modelview * (v, 1).
++// VGL_TEXCOORD_GEN_EYE_NORMAL: the array holds normals, the result is the normal matrix * v (normalized with GL_NORMALIZE).
++// VGL_TEXCOORD_GEN_EYE_REFLECTION: the array holds normals, the result is the eye space direction from the eye
++// to the vertex reflected about that normal.
++// GL_NONE uses the coordinates as they are. Default value: GL_NONE.
++void vglTexCoordGen(GLenum mode);
++
+ // Loads the depth buffer of the currently bound renderbuffer into the currently bound GL texture.
+ void vglTexImageDepthBuffer(GLenum target);
+ 

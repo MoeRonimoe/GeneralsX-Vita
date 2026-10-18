@@ -3217,10 +3217,10 @@ void ParticleSystemManager::reset()
 // ------------------------------------------------------------------------------------------------
 /** Update all particle systems */
 // ------------------------------------------------------------------------------------------------
-//DECLARE_PERF_TIMER(ParticleSystemManager)
+DECLARE_PERF_TIMER(ParticleSystemManager)
 void ParticleSystemManager::update()
 {
-	//USE_PERF_TIMER(ParticleSystemManager)
+	USE_PERF_TIMER(ParticleSystemManager)
 
 	// TheSuperHackers @tweak Complete the render update of the previous logic frame before the logic update
 	// changes the rates, so that every logic frame integrates exactly one logic time step.

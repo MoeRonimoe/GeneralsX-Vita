@@ -220,6 +220,11 @@ public:
 
 	Bool doesNeedFullUpdate() {return m_needFullUpdate;}
 
+	// GeneralsX @bugfix Claude 14/10/2026 For the scripted camera the drawn terrain is centered on
+	// the cells in view at any camera pitch, and the view learns how many cells that are, so it can
+	// draw more terrain when it shows more (see W3DView::updateTerrain).
+	void setCenterOnVisibleArea(Bool center) { m_centerOnVisibleArea = center; }
+	const ICoord2D &getVisibleAreaSize() const { return m_visibleAreaSize; }
 
 	virtual int updateBlock(Int x0, Int y0, Int x1, Int y1, WorldHeightMap *pMap, RefRenderObjListIterator *pLightsIterator) = 0;
 
@@ -246,6 +251,8 @@ protected:
 	Real	m_minHeight;	///<minimum value of height samples in heightmap
 	Real	m_maxHeight;	///<maximum value of height samples in heightmap
 	Bool m_showImpassableAreas; ///< If true, shade impassable areas.
+	Bool m_centerOnVisibleArea; ///< If true, center the drawn terrain on the cells in view at any camera pitch.
+	ICoord2D m_visibleAreaSize; ///< Cells in view in x and y, found the last time the drawn terrain was centered on them.
 
 	// STL is "smart." This is a variable sized bitset. Very memory efficient.
 	std::vector<bool> m_showAsVisibleCliff;

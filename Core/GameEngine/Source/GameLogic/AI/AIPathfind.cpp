@@ -5991,10 +5991,10 @@ Path *Pathfinder::getAircraftPath( const Object *obj, const Coord3D *to )
 /**
  * Process some path requests in the pathfind queue.
  */
-//DECLARE_PERF_TIMER(processPathfindQueue)
+DECLARE_PERF_TIMER(processPathfindQueue)
 void Pathfinder::processPathfindQueue()
 {
-	//USE_PERF_TIMER(processPathfindQueue)
+	USE_PERF_TIMER(processPathfindQueue)
 	if (!m_isMapReady) {
 		return;
 	}

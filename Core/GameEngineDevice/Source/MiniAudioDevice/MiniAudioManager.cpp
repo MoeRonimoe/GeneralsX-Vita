@@ -63,11 +63,15 @@
 #include "GameLogic/FPUControl.h"
 
 #include "Common/file.h"
+
+// GeneralsX @build Claude 12/10/2026 FFmpeg is only one way of turning a file into samples; see createSound().
+#if defined(RTS_HAS_FFMPEG)
 #include "VideoDevice/FFmpeg/FFmpegFile.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
 }
+#endif
 
 #ifdef _INTERNAL
 //#pragma optimize("", off)
@@ -91,7 +95,8 @@ MiniAudioManager::MiniAudioManager() :
 	m_lastSelectedPlaybackDevice(PROVIDER_ERROR),
 	m_binkHandle(NULL),
 	m_pref3DProvider(AsciiString::TheEmptyString),
-	m_prefSpeaker(AsciiString::TheEmptyString)
+	m_prefSpeaker(AsciiString::TheEmptyString),
+	m_deviceOpen(false)
 {
 }
 
@@ -349,110 +354,15 @@ void MiniAudioManager::playAudioEvent(AudioRequest *req)
 		break;
 	}
 
-	// Use FFmpeg to decode the file into PCM, then feed to miniaudio.
-	// This avoids miniaudio's built-in decoders which hang on MP3 via VFS.
-	File *file = TheFileSystem->openFile(fileToPlay.str());
-	if (!file) {
-		DEBUG_LOG(("MiniAudio: Failed to open file: %s\n", fileToPlay.str()));
+	// GeneralsX @refactor Claude 12/10/2026 How the file becomes a sound is up to createSound(), which a
+	// platform can replace (the PS Vita has no FFmpeg and cannot decode a whole track at once).
+	ma_sound *sound = createSound(fileToPlay, flags, groupToUse, audio);
+	if (sound == NULL) {
 		releasePlayingAudio(audio);
 		return;
 	}
 
-	FFmpegFile *ffmpegFile = NEW FFmpegFile();
-	if (!ffmpegFile->open(file)) {
-		DEBUG_LOG(("MiniAudio: Failed to open FFmpeg file: %s\n", fileToPlay.str()));
-		delete ffmpegFile;
-		releasePlayingAudio(audio);
-		return;
-	}
-
-	// Decode all audio frames into a buffer
-	std::vector<uint8_t> pcmData;
-	int sampleRate = 0;
-	int channels = 0;
-	int bytesPerSample = 0;
-
-	auto onFrame = [&](AVFrame *frame, int stream_idx, int stream_type, void *user_data) {
-		if (stream_type != AVMEDIA_TYPE_AUDIO) return;
-
-		sampleRate = frame->sample_rate;
-		channels = frame->ch_layout.nb_channels;
-		bytesPerSample = av_get_bytes_per_sample(static_cast<AVSampleFormat>(frame->format));
-
-		const int frameSize = av_samples_get_buffer_size(NULL, channels, frame->nb_samples,
-			static_cast<AVSampleFormat>(frame->format), 1);
-		if (frameSize <= 0) return;
-
-		if (av_sample_fmt_is_planar(static_cast<AVSampleFormat>(frame->format))) {
-			// Interleave planar audio
-			for (int s = 0; s < frame->nb_samples; s++) {
-				for (int c = 0; c < channels; c++) {
-					const uint8_t *src = frame->data[c] + s * bytesPerSample;
-					pcmData.insert(pcmData.end(), src, src + bytesPerSample);
-				}
-			}
-		} else {
-			pcmData.insert(pcmData.end(), frame->data[0], frame->data[0] + frameSize);
-		}
-	};
-
-	ffmpegFile->setFrameCallback(onFrame);
-	ffmpegFile->setUserData(NULL);
-
-	while (ffmpegFile->decodePacket()) {}
-
-	// Always delete ffmpegFile after decoding is complete
-	delete ffmpegFile;
-	ffmpegFile = NULL;
-
-	if (pcmData.empty() || sampleRate == 0 || bytesPerSample == 0) {
-		DEBUG_LOG(("MiniAudio: No audio data decoded from: %s\n", fileToPlay.str()));
-		releasePlayingAudio(audio);
-		return;
-	}
-
-	// Map FFmpeg bytes-per-sample to miniaudio format
-	ma_format maFmt = ma_format_unknown;
-	if (bytesPerSample == 1) maFmt = ma_format_u8;
-	else if (bytesPerSample == 2) maFmt = ma_format_s16;
-	else if (bytesPerSample == 4) maFmt = ma_format_f32;
-
-	if (maFmt == ma_format_unknown) {
-		DEBUG_LOG(("MiniAudio: Unsupported format (%d bps) for: %s\n", bytesPerSample, fileToPlay.str()));
-		releasePlayingAudio(audio);
-		return;
-	}
-
-	// Create audio buffer — init_copy copies data into internal storage
-	// so it's safe when pcmData goes out of scope after this function returns.
-	ma_audio_buffer *audioBuffer = (ma_audio_buffer *)malloc(sizeof(ma_audio_buffer));
-	ma_audio_buffer_config abConfig = ma_audio_buffer_config_init(maFmt, channels,
-		pcmData.size() / ma_get_bytes_per_frame(maFmt, channels),
-		pcmData.data(), NULL);
-
-	ma_result result = ma_audio_buffer_init_copy(&abConfig, audioBuffer);
-	if (result != MA_SUCCESS) {
-		DEBUG_LOG(("MiniAudio: Failed to create audio buffer: %d for '%s'\n", result, fileToPlay.str()));
-		free(audioBuffer);
-		releasePlayingAudio(audio);
-		return;
-	}
-	audioBuffer->ref.sampleRate = sampleRate;
-
-	ma_sound *sound = (ma_sound *)malloc(sizeof(ma_sound));
-	result = ma_sound_init_from_data_source(&m_engine, audioBuffer, flags, groupToUse, sound);
-	if (result != MA_SUCCESS) {
-		DEBUG_LOG(("MiniAudio: Failed to init sound: %d for '%s'\n", result, fileToPlay.str()));
-		ma_audio_buffer_uninit(audioBuffer);
-		free(audioBuffer);
-		free(sound);
-		releasePlayingAudio(audio);
-		return;
-	}
-
-	// Assign to PlayingAudio before any early returns below
 	audio->m_sound = sound;
-	audio->m_audioBuffer = audioBuffer;
 
 	switch (info->m_soundType)
 	{
@@ -498,7 +408,7 @@ void MiniAudioManager::playAudioEvent(AudioRequest *req)
 	// GeneralsX @bugfix Mr. Meeseeks 19/06/2026 - Initialize volume using adjustPlayingVolume
 	adjustPlayingVolume(audio);
 
-	result = ma_sound_start(sound);
+	ma_result result = ma_sound_start(sound);
 	if (result != MA_SUCCESS) {
 		DEBUG_LOG(("MiniAudio: Failed to start sound: %d for '%s'\n", result, fileToPlay.str()));
 		releasePlayingAudio(audio);
@@ -506,6 +416,123 @@ void MiniAudioManager::playAudioEvent(AudioRequest *req)
 	}
 
 	m_playingSounds.push_back(audio);
+}
+
+//-------------------------------------------------------------------------------------------------
+/// Turns a file into a sound that is ready to be started, or returns NULL. What it allocates
+/// besides the sound itself goes into audio, where releaseMiniAudioHandles() finds it.
+ma_sound *MiniAudioManager::createSound(const AsciiString &fileToPlay, ma_uint32 flags, ma_sound_group *groupToUse, PlayingAudio *audio)
+{
+#if defined(RTS_HAS_FFMPEG)
+	// Use FFmpeg to decode the file into PCM, then feed to miniaudio.
+	// This avoids miniaudio's built-in decoders which hang on MP3 via VFS.
+	File *file = TheFileSystem->openFile(fileToPlay.str());
+	if (!file) {
+		DEBUG_LOG(("MiniAudio: Failed to open file: %s\n", fileToPlay.str()));
+		return NULL;
+	}
+
+	FFmpegFile *ffmpegFile = NEW FFmpegFile();
+	if (!ffmpegFile->open(file)) {
+		DEBUG_LOG(("MiniAudio: Failed to open FFmpeg file: %s\n", fileToPlay.str()));
+		delete ffmpegFile;
+		return NULL;
+	}
+
+	// Decode all audio frames into a buffer
+	std::vector<uint8_t> pcmData;
+	int sampleRate = 0;
+	int channels = 0;
+	int bytesPerSample = 0;
+
+	auto onFrame = [&](AVFrame *frame, int stream_idx, int stream_type, void *user_data) {
+		if (stream_type != AVMEDIA_TYPE_AUDIO) return;
+
+		sampleRate = frame->sample_rate;
+		channels = frame->ch_layout.nb_channels;
+		bytesPerSample = av_get_bytes_per_sample(static_cast<AVSampleFormat>(frame->format));
+
+		const int frameSize = av_samples_get_buffer_size(NULL, channels, frame->nb_samples,
+			static_cast<AVSampleFormat>(frame->format), 1);
+		if (frameSize <= 0) return;
+
+		if (av_sample_fmt_is_planar(static_cast<AVSampleFormat>(frame->format))) {
+			// Interleave planar audio
+			for (int s = 0; s < frame->nb_samples; s++) {
+				for (int c = 0; c < channels; c++) {
+					const uint8_t *src = frame->data[c] + s * bytesPerSample;
+					pcmData.insert(pcmData.end(), src, src + bytesPerSample);
+				}
+			}
+		} else {
+			pcmData.insert(pcmData.end(), frame->data[0], frame->data[0] + frameSize);
+		}
+	};
+
+	ffmpegFile->setFrameCallback(onFrame);
+	ffmpegFile->setUserData(NULL);
+
+	while (ffmpegFile->decodePacket()) {}
+
+	// Always delete ffmpegFile after decoding is complete
+	delete ffmpegFile;
+	ffmpegFile = NULL;
+
+	if (pcmData.empty() || sampleRate == 0 || bytesPerSample == 0) {
+		DEBUG_LOG(("MiniAudio: No audio data decoded from: %s\n", fileToPlay.str()));
+		return NULL;
+	}
+
+	// Map FFmpeg bytes-per-sample to miniaudio format
+	ma_format maFmt = ma_format_unknown;
+	if (bytesPerSample == 1) maFmt = ma_format_u8;
+	else if (bytesPerSample == 2) maFmt = ma_format_s16;
+	else if (bytesPerSample == 4) maFmt = ma_format_f32;
+
+	if (maFmt == ma_format_unknown) {
+		DEBUG_LOG(("MiniAudio: Unsupported format (%d bps) for: %s\n", bytesPerSample, fileToPlay.str()));
+		return NULL;
+	}
+
+	// Create audio buffer — init_copy copies data into internal storage
+	// so it's safe when pcmData goes out of scope after this function returns.
+	ma_audio_buffer *audioBuffer = (ma_audio_buffer *)malloc(sizeof(ma_audio_buffer));
+	ma_audio_buffer_config abConfig = ma_audio_buffer_config_init(maFmt, channels,
+		pcmData.size() / ma_get_bytes_per_frame(maFmt, channels),
+		pcmData.data(), NULL);
+
+	ma_result result = ma_audio_buffer_init_copy(&abConfig, audioBuffer);
+	if (result != MA_SUCCESS) {
+		DEBUG_LOG(("MiniAudio: Failed to create audio buffer: %d for '%s'\n", result, fileToPlay.str()));
+		free(audioBuffer);
+		return NULL;
+	}
+	audioBuffer->ref.sampleRate = sampleRate;
+
+	ma_sound *sound = (ma_sound *)malloc(sizeof(ma_sound));
+	result = ma_sound_init_from_data_source(&m_engine, audioBuffer, flags, groupToUse, sound);
+	if (result != MA_SUCCESS) {
+		DEBUG_LOG(("MiniAudio: Failed to init sound: %d for '%s'\n", result, fileToPlay.str()));
+		ma_audio_buffer_uninit(audioBuffer);
+		free(audioBuffer);
+		free(sound);
+		return NULL;
+	}
+
+	audio->m_audioBuffer = audioBuffer;
+	return sound;
+#else
+	// Without FFmpeg the file goes through the resource manager and miniaudio's own decoders
+	// (WAV and MP3, which is all the game ships).
+	ma_sound *sound = (ma_sound *)malloc(sizeof(ma_sound));
+	ma_result result = ma_sound_init_from_file(&m_engine, fileToPlay.str(), flags | MA_SOUND_FLAG_DECODE, groupToUse, NULL, sound);
+	if (result != MA_SUCCESS) {
+		DEBUG_LOG(("MiniAudio: Failed to load sound: %d for '%s'\n", result, fileToPlay.str()));
+		free(sound);
+		return NULL;
+	}
+	return sound;
+#endif
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -600,6 +627,12 @@ void MiniAudioManager::releaseMiniAudioHandles(PlayingAudio *release)
 		ma_sound_uninit(release->m_sound);
 		free(release->m_sound);
 		release->m_sound = NULL;
+	}
+	// GeneralsX @feature Claude 12/10/2026 A sound that was waiting for its turn goes with the entry.
+	if (release->m_nextSound) {
+		ma_sound_uninit(release->m_nextSound);
+		free(release->m_nextSound);
+		release->m_nextSound = NULL;
 	}
 	if (release->m_audioBuffer) {
 		ma_audio_buffer_uninit(release->m_audioBuffer);
@@ -852,6 +885,7 @@ void MiniAudioManager::openDevice(void)
 		m_playbackDeviceCount > 0 ? m_playbackDevices[0].name : "default",
 		m_playbackDeviceCount);
 
+	m_deviceOpen = true;
 	TheAudio->refreshCachedVariables();
 }
 
@@ -860,6 +894,13 @@ void MiniAudioManager::closeDevice(void)
 {
 	// GeneralsX @bugfix meerzulee 19/07/2026 FP env guard for audio entry point (see #215)
 	ScopedFPUGuard fpuGuard;
+	// GeneralsX @bugfix Claude 12/10/2026 Nothing to tear down when the device never opened (audio switched
+	// off, or a failure in openDevice): the engine, the groups and the context are uninitialized then.
+	if (!m_deviceOpen) {
+		return;
+	}
+	m_deviceOpen = false;
+
 	// Stop all audio first to prevent use-after-free in audio callbacks
 	stopAllAudioImmediately();
 

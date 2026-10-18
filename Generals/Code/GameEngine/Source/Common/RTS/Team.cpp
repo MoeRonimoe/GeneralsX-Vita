@@ -2524,10 +2524,10 @@ Bool Team::hasAnyBuildFacility() const
 }
 
 // ------------------------------------------------------------------------
-//DECLARE_PERF_TIMER(updateGenericScripts)
+DECLARE_PERF_TIMER(updateGenericScripts)
 void Team::updateGenericScripts()
 {
-	//USE_PERF_TIMER(updateGenericScripts)
+	USE_PERF_TIMER(updateGenericScripts)
 	for (Int i = 0; i < MAX_GENERIC_SCRIPTS; ++i) {
 		if (m_shouldAttemptGenericScript[i]) {
 			// Does the condition succeed? If so, run it. If it is a run once script, also mark that we

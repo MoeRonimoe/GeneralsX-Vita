@@ -59,6 +59,53 @@
 
 DECLARE_PERF_TIMER(FileSystem)
 
+// GeneralsX @feature Claude 12/10/2026 Names the file operations that take long while the PS Vita frame
+// profile is on. A failed open or a read from the memory card costs milliseconds there,
+// and one in the middle of a mission is a visible hitch.
+#if defined(__vita__)
+#include <VitaDiagnostics.h>
+
+namespace
+{
+
+const uint64_t SLOW_FILE_OPERATION_US = 5000;
+
+class SlowFileOperationLog
+{
+public:
+	SlowFileOperationLog(const Char *operation, const Char *filename) :
+		m_operation(operation), m_filename(filename), m_start(VitaDiagnostics::profileStart())
+	{
+	}
+
+	~SlowFileOperationLog()
+	{
+		if (m_start == 0)
+			return;
+
+		const uint64_t elapsed = VitaDiagnostics::now() - m_start;
+		VitaDiagnostics::noteFileOperation(m_operation, m_filename, elapsed);
+		if (elapsed >= SLOW_FILE_OPERATION_US)
+		{
+			fprintf(stderr, "[file] %s %s: %.1f ms\n", m_operation, m_filename, elapsed / 1000.0);
+			fflush(stderr);
+		}
+	}
+
+private:
+	const Char *m_operation;
+	const Char *m_filename;
+	uint64_t m_start;
+};
+
+} // namespace
+
+#define LOG_SLOW_FILE_OPERATION(operation, filename) const SlowFileOperationLog slowFileOperationLog(operation, filename)
+#else
+#define LOG_SLOW_FILE_OPERATION(operation, filename)
+#endif
+
+
 //----------------------------------------------------------------------------
 //         Externals
 //----------------------------------------------------------------------------
@@ -175,6 +222,7 @@ void		FileSystem::reset()
 File*		FileSystem::openFile( const Char *filename, Int access, size_t bufferSize, FileInstance instance )
 {
 	USE_PERF_TIMER(FileSystem)
+	LOG_SLOW_FILE_OPERATION("open", filename);
 	File *file = nullptr;
 
 	// GeneralsX @bugfix felipebraz 02/10/2026 Allow mod archives (e.g. !*.big, custom SkirmishScripts)
@@ -245,6 +293,7 @@ File*		FileSystem::openFile( const Char *filename, Int access, size_t bufferSize
 Bool FileSystem::doesFileExist(const Char *filename, FileInstance instance) const
 {
 	USE_PERF_TIMER(FileSystem)
+	LOG_SLOW_FILE_OPERATION("exists", filename);
 
 #if ENABLE_FILESYSTEM_EXISTENCE_CACHE
 	{
@@ -331,6 +380,7 @@ Bool FileSystem::doesFileExist(const Char *filename, FileInstance instance) cons
 void FileSystem::getFileListInDirectory(const AsciiString& directory, const AsciiString& searchName, FilenameList &filenameList, Bool searchSubdirectories) const
 {
 	USE_PERF_TIMER(FileSystem)
+	LOG_SLOW_FILE_OPERATION("list", directory.str());
 	TheLocalFileSystem->getFileListInDirectory(AsciiString::TheEmptyString, directory, searchName, filenameList, searchSubdirectories);
 	TheArchiveFileSystem->getFileListInDirectory(AsciiString::TheEmptyString, directory, searchName, filenameList, searchSubdirectories);
 }
@@ -341,6 +391,7 @@ void FileSystem::getFileListInDirectory(const AsciiString& directory, const Asci
 Bool FileSystem::getFileInfo(const AsciiString& filename, FileInfo *fileInfo, FileInstance instance) const
 {
 	USE_PERF_TIMER(FileSystem)
+	LOG_SLOW_FILE_OPERATION("info", filename.str());
 
 	// TheSuperHackers @todo Add file info cache?
 

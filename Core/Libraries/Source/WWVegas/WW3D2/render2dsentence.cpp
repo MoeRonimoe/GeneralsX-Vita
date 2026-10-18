@@ -1907,7 +1907,7 @@ FontCharsClass::Locate_Font_FontConfig (const char *font_name)
 	//
 	// Tier 2: System Fontconfig match (desktop Linux/macOS)
 	//
-#if !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+#ifdef SAGE_USE_FONTCONFIG
 	FcConfig *config = FcInitLoadConfigAndFonts();
 	if ( config != nullptr ) {
 		FcPattern *pattern = FcNameParse( (const FcChar8*)font_name );
@@ -1957,7 +1957,17 @@ FontCharsClass::Locate_Font_FontConfig (const char *font_name)
 	// Tier 3: Universal fallback to bundled Arial/Liberation font for recognized core UI fonts
 	// GeneralsX @bugfix felipebraz 26/09/2026 Guard Tier 3 so unresolved Unicode/CJK fonts return nullptr and allow caller fallback delegation
 	//
-	if ( is_arial || is_times || is_courier ) {
+	bool use_bundled_fallback = is_arial || is_times || is_courier;
+#ifndef SAGE_USE_FONTCONFIG
+	// Platforms without fontconfig (iOS, PS Vita) have no system fonts to substitute with.
+	// Every other text font the data asks for (Tahoma, FixedSys, ...) gets the bundled sans
+	// serif, as fontconfig would pick one on a desktop; text in those fonts would otherwise
+	// not be drawn at all. Icon and wide-coverage fonts stay unresolved so the caller skips them.
+	if ( !is_fa_brands && strstr( normalized, "unicode" ) == nullptr ) {
+		use_bundled_fallback = true;
+	}
+#endif
+	if ( use_bundled_fallback ) {
 		static const char *fallback_names_bold[] = {
 			"arialbold.ttf",
 			"arial.ttf",
@@ -1982,6 +1992,75 @@ FontCharsClass::Locate_Font_FontConfig (const char *font_name)
 	fflush( stderr );
 	return nullptr;
 }
+
+
+#ifndef SAGE_USE_FONTCONFIG
+////////////////////////////////////////////////////////////////////////////////////
+//
+//	Get_Font_File_Image
+//
+// GeneralsX @bugfix Claude 11/10/2026 Font files are read once and shared by all faces.
+// Every combination of font, size and weight is a FontCharsClass with a face of its own,
+// and a face created from a path keeps its file open. The user interface asks for dozens
+// of combinations; on the PS Vita that used up all 64 file descriptors of the process, and
+// from then on no font and no other file could be opened. The platforms without fontconfig
+// only ever load the few small bundled fonts, so their files are kept in memory instead.
+// The images are never released: FreeType reads from them for as long as a face exists.
+////////////////////////////////////////////////////////////////////////////////////
+namespace
+{
+
+struct FontFileImage
+{
+	char			Path[260];
+	FT_Byte *	Data;
+	FT_Long		Size;
+};
+
+const int MAX_FONT_FILE_IMAGES = 16;
+FontFileImage _FontFileImages[MAX_FONT_FILE_IMAGES];
+int _FontFileImageCount = 0;
+
+const FontFileImage *
+Get_Font_File_Image (const char *font_path)
+{
+	for ( int i = 0; i < _FontFileImageCount; i++ ) {
+		if ( strcmp( _FontFileImages[i].Path, font_path ) == 0 ) {
+			return &_FontFileImages[i];
+		}
+	}
+
+	if ( _FontFileImageCount >= MAX_FONT_FILE_IMAGES || strlen( font_path ) >= sizeof(_FontFileImages[0].Path) ) {
+		return nullptr;
+	}
+
+	FILE *file = fopen( font_path, "rb" );
+	if ( file == nullptr ) {
+		return nullptr;
+	}
+
+	FontFileImage *image = nullptr;
+	if ( fseek( file, 0, SEEK_END ) == 0 ) {
+		const long size = ftell( file );
+		if ( size > 0 && fseek( file, 0, SEEK_SET ) == 0 ) {
+			FT_Byte *data = (FT_Byte *)malloc( size );
+			if ( data != nullptr && fread( data, 1, size, file ) == (size_t)size ) {
+				image = &_FontFileImages[_FontFileImageCount++];
+				strcpy( image->Path, font_path );
+				image->Data = data;
+				image->Size = size;
+			} else {
+				free( data );
+			}
+		}
+	}
+
+	fclose( file );
+	return image;
+}
+
+} // namespace
+#endif // !SAGE_USE_FONTCONFIG
 
 
 ////////////////////////////////////////////////////////////////////////////////////
@@ -2029,8 +2108,20 @@ FontCharsClass::Create_Freetype_Font (const char *font_name)
 	//
 	//	Load the font face
 	//
+#ifndef SAGE_USE_FONTCONFIG
+	const FontFileImage *image = Get_Font_File_Image( font_path );
+	if ( image != nullptr ) {
+		error = FT_New_Memory_Face( FTLibrary, image->Data, image->Size, 0, &FTFace );
+	} else {
+		error = FT_New_Face( FTLibrary, font_path, 0, &FTFace );
+	}
+#else
 	error = FT_New_Face( FTLibrary, font_path, 0, &FTFace );
+#endif
 	if ( error != 0 ) {
+		// GeneralsX @bugfix Claude 11/10/2026 Callers use the font they asked for unchecked, so the log has to say why there is none.
+		fprintf( stderr, "[Font] WARNING: Unable to load font file '%s' for '%s' (FreeType error %d)\n", font_path, font_name, (int)error );
+		fflush( stderr );
 		FT_Done_FreeType( FTLibrary );
 		FTLibrary = nullptr;
 		return false;

@@ -77,6 +77,7 @@
 #include "GameLogic/Squad.h"
 #include "GameLogic/GhostObject.h"
 
+#include "GameClient/Drawable.h"
 #include "GameClient/Line2D.h"
 #include "GameClient/ControlBar.h"
 
@@ -2182,7 +2183,15 @@ void PartitionData::invalidateShroudedStatusForPlayer(Int playerIndex)
 #ifndef DISABLE_INVALID_PREVENTION
 	if (m_shroudedness[playerIndex] != OBJECTSHROUD_INVALID && m_shroudedness[playerIndex] != OBJECTSHROUD_INVALID_BUT_PREVIOUS_VALID)
 #endif
+	{
 		m_shroudedness[playerIndex] = OBJECTSHROUD_INVALID;
+
+		// GeneralsX @performance Claude 13/10/2026 The client works the status out again for the
+		// drawables that are marked, and for no others (Drawable::markShroudStatusStale).
+		Drawable *draw = m_object != nullptr ? m_object->getDrawable() : nullptr;
+		if (draw != nullptr)
+			draw->markShroudStatusStale();
+	}
 }
 
 //-----------------------------------------------------------------------------
@@ -2785,10 +2794,10 @@ void PartitionManager::shutdown()
 }
 
 //-----------------------------------------------------------------------------
-//DECLARE_PERF_TIMER(PartitionManager_update)
+DECLARE_PERF_TIMER(PartitionManager_update)
 void PartitionManager::update()
 {
-	//USE_PERF_TIMER(PartitionManager_update)
+	USE_PERF_TIMER(PartitionManager_update)
 	{
 #ifdef INTENSE_DEBUG
 		Int cc = 0;
@@ -3271,7 +3280,7 @@ void PartitionManager::calcRadiusVec()
 #endif
 
 //-----------------------------------------------------------------------------
-//DECLARE_PERF_TIMER(getClosestObjects)
+DECLARE_PERF_TIMER(getClosestObjects)
 Object *PartitionManager::getClosestObjects(
 	const Object *obj,
 	const Coord3D *pos,
@@ -3283,7 +3292,7 @@ Object *PartitionManager::getClosestObjects(
 	Coord3D *closestVecArg
 )
 {
-	//USE_PERF_TIMER(getClosestObjects)
+	USE_PERF_TIMER(getClosestObjects)
 
 #ifdef DUMP_PERF_STATS
 	if (TheGameLogic->getFrame() != s_gcoPerfFrame)

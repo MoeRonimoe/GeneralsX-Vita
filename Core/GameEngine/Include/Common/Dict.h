@@ -312,6 +312,10 @@ private:
 		unsigned short	m_refCount;						// reference count
 		unsigned short	m_numPairsAllocated;  // length of data allocated
 		unsigned short	m_numPairsUsed;				// length of data allocated
+		// The pairs follow this header directly. Without the padding they would start at
+		// offset 6, which misaligns their pointer-sized members: harmless on x86, but ARM
+		// faults on a floating point store to an address that is not word aligned.
+		unsigned short	m_padding;
 		//DictPair m_pairs[];
 
 		DictPair* peek() { return (DictPair*)(this+1); }

@@ -802,7 +802,15 @@ void RTS3DScene::renderOneObject(RenderInfoClass &rinfo, RenderObjClass *robj, I
 		rinfo.Pop_Override_Flags();	//flags used to disable base pass and only render custom heat vision pass.
 }
 
-//DECLARE_PERF_TIMER(translucentRender)
+DECLARE_PERF_TIMER(translucentRender)
+// GeneralsX @feature Claude 11/10/2026 Timers for the steps of drawing the scene, read by the PS Vita frame profile.
+DECLARE_PERF_TIMER(Scene_flushMeshes)
+DECLARE_PERF_TIMER(Scene_occludedObjects)
+DECLARE_PERF_TIMER(Scene_occludedSubmit)
+DECLARE_PERF_TIMER(Scene_occludedColors)
+DECLARE_PERF_TIMER(Scene_trees)
+DECLARE_PERF_TIMER(Scene_staticSortLists)
+DECLARE_PERF_TIMER(Scene_translucentObjects)
 
 /**Draw everything that was submitted from this scene*/
 void RTS3DScene::Flush(RenderInfoClass & rinfo)
@@ -815,29 +823,44 @@ void RTS3DScene::Flush(RenderInfoClass & rinfo)
 	if (m_customPassMode == SCENE_PASS_DEFAULT && Get_Extra_Pass_Polygon_Mode() == EXTRA_PASS_DISABLE)
 		DoShadows(rinfo, false);	//draw all non-stencil shadows (decals) since they fall under other objects.
 
-	TheDX8MeshRenderer.Flush();	//draw all non-translucent objects.
+	{
+		USE_PERF_TIMER(Scene_flushMeshes)
+		TheDX8MeshRenderer.Flush();	//draw all non-translucent objects.
+	}
 
 	//draw all non-translucent objects which were separated because they are hidden and need custom rendering.
+	{
+		USE_PERF_TIMER(Scene_occludedObjects)
 #ifdef USE_NON_STENCIL_OCCLUSION
-	flushOccludedObjects(rinfo);
+		flushOccludedObjects(rinfo);
 #else
-	if (DX8Wrapper::Has_Stencil())
-		flushOccludedObjectsIntoStencil(rinfo);
+		if (DX8Wrapper::Has_Stencil())
+			flushOccludedObjectsIntoStencil(rinfo);
 #endif
+	}
 	// Draw the trees last so they alpha blend onto everything correctly.
-	DoTrees(rinfo);
+	{
+		USE_PERF_TIMER(Scene_trees)
+		DoTrees(rinfo);
+	}
 
 	//don't draw shadows in this mode because they interfere with destination alpha
 	if (m_customPassMode == SCENE_PASS_DEFAULT && Get_Extra_Pass_Polygon_Mode() == EXTRA_PASS_DISABLE)
 		DoShadows(rinfo, true);	//draw all stencil shadows
 
-	WW3D::Render_And_Clear_Static_Sort_Lists(rinfo);	//draws things like water
+	{
+		USE_PERF_TIMER(Scene_staticSortLists)
+		WW3D::Render_And_Clear_Static_Sort_Lists(rinfo);	//draws things like water
+	}
 
 	if (m_customPassMode == SCENE_PASS_DEFAULT && Get_Extra_Pass_Polygon_Mode() == EXTRA_PASS_DISABLE)
+	{
+		USE_PERF_TIMER(Scene_translucentObjects)
 		flushTranslucentObjects(rinfo);	//draw all translucent meshes which don't need per-polygon sorting.
+	}
 
 	{
-		//USE_PERF_TIMER(translucentRender)
+		USE_PERF_TIMER(translucentRender)
 
 		//don't draw transparent in this mode because they interfere with destination alpha
 		if (m_customPassMode == SCENE_PASS_DEFAULT && Get_Extra_Pass_Polygon_Mode() == EXTRA_PASS_DISABLE)
@@ -927,10 +950,10 @@ void RTS3DScene::updatePlayerColorPasses()
 
 #define ZBias 0.0001f
 
-//DECLARE_PERF_TIMER(NonTerrainRender)
+DECLARE_PERF_TIMER(NonTerrainRender)
 void RTS3DScene::Render(RenderInfoClass & rinfo)
 {
-	//USE_PERF_TIMER(NonTerrainRender)
+	USE_PERF_TIMER(NonTerrainRender)
 	DX8Wrapper::Set_Fog(FogEnabled, FogColor, FogStart, FogEnd);
 
 	//Override the behind building selection if it's not available on current hardware (needs stencil).
@@ -1059,6 +1082,9 @@ void RTS3DScene::Render(RenderInfoClass & rinfo)
 /** Custom render method for the RTS3DScene, custom render properties for our
   * particular game go here */
 //=============================================================================
+DECLARE_PERF_TIMER(Scene_visibilityCheck)
+DECLARE_PERF_TIMER(Scene_frameUpdates)
+DECLARE_PERF_TIMER(Scene_submitObjects)
 void RTS3DScene::Customized_Render( RenderInfoClass &rinfo )
 {
 #ifdef DIRTY_CONDITION_FLAGS
@@ -1074,6 +1100,7 @@ void RTS3DScene::Customized_Render( RenderInfoClass &rinfo )
 #define USE_LIGHT_ENV 1
 
    if (!Visibility_Checked) {
+      USE_PERF_TIMER(Scene_visibilityCheck)
       // set the visibility bit in all render objects in all layers.
 	   Visibility_Check(&rinfo.Camera);
 #ifdef USE_NON_STENCIL_OCCLUSION
@@ -1085,15 +1112,18 @@ void RTS3DScene::Customized_Render( RenderInfoClass &rinfo )
 
 	RefRenderObjListIterator it(&UpdateList);
 	// allow all objects in the update list to do their "every frame" processing
-	for (it.First(); !it.Is_Done(); it.Next()) {
-		RenderObjClass * robj = it.Peek_Obj();
-		if (robj->Class_ID() == RenderObjClass::CLASSID_TILEMAP)
-			terrainObject=robj;	//found terrain object, store for later.
-		if (!ShaderClass::Is_Backface_Culling_Inverted()) {
-			// If we are doing water mirror, we draw with backface culling inverted.  In this case,
-			// we only want to call On_Frame_Update if we aren't drawing water, as otherwise
-			// we get 2 frame updates per frame, and it screws up the particle emitters.
-			it.Peek_Obj()->On_Frame_Update();
+	{
+		USE_PERF_TIMER(Scene_frameUpdates)
+		for (it.First(); !it.Is_Done(); it.Next()) {
+			RenderObjClass * robj = it.Peek_Obj();
+			if (robj->Class_ID() == RenderObjClass::CLASSID_TILEMAP)
+				terrainObject=robj;	//found terrain object, store for later.
+			if (!ShaderClass::Is_Backface_Culling_Inverted()) {
+				// If we are doing water mirror, we draw with backface culling inverted.  In this case,
+				// we only want to call On_Frame_Update if we aren't drawing water, as otherwise
+				// we get 2 frame updates per frame, and it screws up the particle emitters.
+				it.Peek_Obj()->On_Frame_Update();
+			}
 		}
 	}
 
@@ -1129,6 +1159,8 @@ void RTS3DScene::Customized_Render( RenderInfoClass &rinfo )
 #endif
 
 	// loop through all render objects in the list:
+	{
+	USE_PERF_TIMER(Scene_submitObjects)
 	for (it.First(&RenderList); !it.Is_Done();)
 	{
 		// get the render object
@@ -1150,6 +1182,7 @@ void RTS3DScene::Customized_Render( RenderInfoClass &rinfo )
 #endif
 				renderOneObject(rinfo, robj, localPlayerIndex);
 		}
+	}
 	}
 
 	//Tell shadow manager to render shadows at the end of this frame
@@ -1395,10 +1428,13 @@ void RTS3DScene::flushOccludedObjectsIntoStencil(RenderInfoClass & rinfo)
 
 				//Render all of this player's objects for which we care when they are occluded.
 				RenderObjClass **renderList=&playerObjects[k][0];
-				for (Int j=0; j<numObjects; j++)
 				{
-					renderOneObject(rinfo, (*renderList), localPlayerIndex);
-					renderList++;	//advance to next object
+					USE_PERF_TIMER(Scene_occludedSubmit)
+					for (Int j=0; j<numObjects; j++)
+					{
+						renderOneObject(rinfo, (*renderList), localPlayerIndex);
+						renderList++;	//advance to next object
+					}
 				}
 
 				TheDX8MeshRenderer.Flush();	//render all the submitted meshes using current stencil function
@@ -1409,10 +1445,13 @@ void RTS3DScene::flushOccludedObjectsIntoStencil(RenderInfoClass & rinfo)
 		//but need to render here so that they don't interfere with building occlusion.
 		DX8Wrapper::Set_DX8_Render_State(D3DRS_STENCILENABLE, FALSE );	//these objects are not stored in stencil
 		RenderObjClass **nonOccluderOrOccludeeList=m_nonOccludersOrOccludees;
-		for (k=0; k<m_numNonOccluderOrOccludee; k++)
 		{
-			renderOneObject(rinfo, (*nonOccluderOrOccludeeList), localPlayerIndex);
-			nonOccluderOrOccludeeList++;	//advance to next one
+			USE_PERF_TIMER(Scene_occludedSubmit)
+			for (k=0; k<m_numNonOccluderOrOccludee; k++)
+			{
+				renderOneObject(rinfo, (*nonOccluderOrOccludeeList), localPlayerIndex);
+				nonOccluderOrOccludeeList++;	//advance to next one
+			}
 		}
 		TheDX8MeshRenderer.Flush();	//render all the submitted meshes using current stencil function
 
@@ -1430,10 +1469,13 @@ void RTS3DScene::flushOccludedObjectsIntoStencil(RenderInfoClass & rinfo)
 
 		//Render all potential occluders on top of already rendered potential occludees.
 		RenderObjClass **occluderList=m_potentialOccluders;
-		for (k=0; k<m_numPotentialOccluders; k++)
 		{
-			renderOneObject(rinfo, (*occluderList), localPlayerIndex);
-			occluderList++;	//advance to next one
+			USE_PERF_TIMER(Scene_occludedSubmit)
+			for (k=0; k<m_numPotentialOccluders; k++)
+			{
+				renderOneObject(rinfo, (*occluderList), localPlayerIndex);
+				occluderList++;	//advance to next one
+			}
 		}
 
 		TheDX8MeshRenderer.Flush();	//render all the submitted meshes using current stencil function
@@ -1442,12 +1484,15 @@ void RTS3DScene::flushOccludedObjectsIntoStencil(RenderInfoClass & rinfo)
 		//INDX contains the occluded player's color index.  We walk through all the player colors and
 		//draw them wherever the stencil matches the color's index.
 		Int usedPlayerColorBits=0;
-		for (k=0; k<numVisiblePlayerColors; k++)
 		{
-			Int color=visiblePlayerColors[k];
-			Int stencilRef=(playerIndexToColorIndex(k+1)<<3)|0x80;
-			renderStenciledPlayerColor(color,stencilRef);
-			usedPlayerColorBits |= stencilRef;	//keep track of all bits used for occlusion/player colors.
+			USE_PERF_TIMER(Scene_occludedColors)
+			for (k=0; k<numVisiblePlayerColors; k++)
+			{
+				Int color=visiblePlayerColors[k];
+				Int stencilRef=(playerIndexToColorIndex(k+1)<<3)|0x80;
+				renderStenciledPlayerColor(color,stencilRef);
+				usedPlayerColorBits |= stencilRef;	//keep track of all bits used for occlusion/player colors.
+			}
 		}
 
 		TheW3DShadowManager->setStencilShadowMask(usedPlayerColorBits);

@@ -27,7 +27,8 @@ find_package(glm CONFIG REQUIRED)
 target_link_libraries(d3dx8 PUBLIC glm::glm)
 
 # GeneralsX @build felipebraz 20/06/2025 GLI causes make_vec4 ambiguity with Apple Clang - only link on Windows
-if(NOT APPLE)
+# VitaSDK ships no GLI package; the Vita build uses the same hand written filters as macOS.
+if(NOT APPLE AND NOT VITA)
     find_package(gli CONFIG REQUIRED)
     target_link_libraries(d3dx8 PUBLIC gli)
 endif()
@@ -96,7 +97,9 @@ else()
     # (_deps/dxvk-build-macos/src/d3d*/), not in ${dxvk_SOURCE_DIR}/lib — that path does not exist.
     # Linux prebuilt DXVK native package does have a lib/ dir, so the guard is macOS-only.
     # Passing a non-existent -L path produces: ld: warning: search path '.../dxvk-src/lib' not found
-    if(NOT APPLE)
+    # The Vita build takes only the Direct3D 8 headers from the DXVK package. The interfaces
+    # are implemented on vitaGL by Platform/Vita/d3d8.
+    if(NOT APPLE AND NOT VITA)
         target_link_directories(d3d8lib INTERFACE
             ${dxvk_SOURCE_DIR}/lib
         )
@@ -145,5 +148,9 @@ target_link_libraries(d3d8lib INTERFACE CompatLib)
 # CompatLib needs d3dx8 for D3DX types
 # SDL3 headers available via vcpkg but linking happens in GameEngineDevice/Main
 target_link_libraries(CompatLib PUBLIC d3dx8)
+
+if(VITA)
+    target_link_libraries(CompatLib PUBLIC vita_compat)
+endif()
 
 endif()

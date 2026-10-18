@@ -5,7 +5,12 @@
 
 // GeneralsX @build felipebraz 20/06/2025 GLI causes make_vec4 ambiguity with Apple Clang (GLM version mismatch).
 // On macOS, exclude GLI and use stub implementations for the surface scaling path.
-#ifndef __APPLE__
+// The Vita build has no GLI package either and shares the hand written filters.
+#if !defined(__APPLE__) && !defined(__vita__)
+#define D3DX8_COMPAT_USE_GLI 1
+#endif
+
+#ifdef D3DX8_COMPAT_USE_GLI
 #include <gli/gli.hpp>
 #include <gli/generate_mipmaps.hpp>
 #endif
@@ -106,7 +111,7 @@ D3DXLoadSurfaceFromSurface(
 		return D3D_OK;
 	}
 
-#ifndef __APPLE__
+#ifdef D3DX8_COMPAT_USE_GLI
 	// GeneralsX @bugfix Antigravity 26/06/2026 Linux: GLI lacks support for A4R4G4B4/R5G6B5 formats.
 	// We use manual box filter downsampling for these formats to fix black infantry rendering.
 	if (descDest.Width == descSrc.Width / 2 && descDest.Height == descSrc.Height / 2)

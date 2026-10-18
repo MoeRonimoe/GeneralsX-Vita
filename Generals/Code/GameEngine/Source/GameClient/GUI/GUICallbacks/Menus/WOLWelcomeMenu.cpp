@@ -71,7 +71,7 @@
 #if defined(_WIN32)
 #include <windows.h>
 #include <shellapi.h>
-#else
+#elif defined(SAGE_USE_SDL3)
 #include <SDL3/SDL.h>
 #endif
 
@@ -91,8 +91,11 @@ static void OpenBrowserURL(const std::string& url)
 {
 #if defined(_WIN32)
 	ShellExecuteA(NULL, "open", url.c_str(), NULL, NULL, SW_SHOWNORMAL);
-#else
+#elif defined(SAGE_USE_SDL3)
 	SDL_OpenURL(url.c_str());
+#else
+	// No web browser to hand the link to (PS Vita).
+	(void)url;
 #endif
 }
 

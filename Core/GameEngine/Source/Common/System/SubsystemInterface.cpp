@@ -29,6 +29,10 @@
 #include "Common/SubsystemInterface.h"
 #include "Common/Xfer.h"
 
+#if defined(__vita__)
+#include <VitaDiagnostics.h>
+#endif
+
 
 #ifdef DUMP_PERF_STATS
 #include "GameLogic/GameLogic.h"
@@ -192,6 +196,12 @@ void SubsystemInterfaceList::initSubsystem(SubsystemInterface* sys, const char* 
 	m_subsystems.push_back(sys);
 	fprintf(stderr, "[SUBSYS] initSubsystem('%s') END\n", name.str());
 	fflush(stderr);
+
+#if defined(__vita__)
+	// GeneralsX @feature Claude 11/10/2026 PS Vita: memory is the scarcest resource there, so the log
+	// records how much is in use after each subsystem has come up.
+	VitaDiagnostics::logMemory(name.str());
+#endif
 }
 
 //-----------------------------------------------------------------------------

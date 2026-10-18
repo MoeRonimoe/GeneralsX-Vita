@@ -457,6 +457,52 @@ bool								DX8Wrapper::IsRenderToTexture							= false;
 
 unsigned							DX8Wrapper::_MainThreadID								= 0;
 bool								DX8Wrapper::CurrentDX8LightEnables[4];
+int								DX8Wrapper::EnvironmentLightCount = -1;
+
+// GeneralsX @performance Claude 13/10/2026 What Set_Light_Environment() made the lights of the render
+// state from, to tell when it is asked for the same again.
+namespace
+{
+struct EnvironmentLight
+{
+	Vector3 direction;
+	Vector3 diffuse;
+	bool isPoint;
+	Vector3 pointCenter;
+	Vector3 pointDiffuse;
+	Vector3 pointAmbient;
+	float pointInnerRadius;
+	float pointOuterRadius;
+
+	void Set(const LightEnvironmentClass &environment, int index)
+	{
+		direction = environment.Get_Light_Direction(index);
+		diffuse = environment.Get_Light_Diffuse(index);
+		isPoint = environment.isPointLight(index);
+		pointCenter = environment.getPointCenter(index);
+		pointDiffuse = environment.getPointDiffuse(index);
+		pointAmbient = environment.getPointAmbient(index);
+		pointInnerRadius = environment.getPointIrad(index);
+		pointOuterRadius = environment.getPointOrad(index);
+	}
+
+	bool Is(const LightEnvironmentClass &environment, int index) const
+	{
+		if (!(direction == environment.Get_Light_Direction(index)) || !(diffuse == environment.Get_Light_Diffuse(index))
+				|| isPoint != environment.isPointLight(index))
+			return false;
+
+		// The rest is only looked at for a point light.
+		return !isPoint || (pointCenter == environment.getPointCenter(index)
+			&& pointDiffuse == environment.getPointDiffuse(index)
+			&& pointAmbient == environment.getPointAmbient(index)
+			&& pointInnerRadius == environment.getPointIrad(index)
+			&& pointOuterRadius == environment.getPointOrad(index));
+	}
+};
+
+EnvironmentLight EnvironmentLights[LightEnvironmentClass::MAX_LIGHTS];
+}
 bool								DX8Wrapper::IsDeviceLost;
 int								DX8Wrapper::ZBias;
 float								DX8Wrapper::ZNear;
@@ -634,6 +680,10 @@ bool DX8Wrapper::Init(void * hwnd, bool lite)
 
 	if (!lite) {
 		// GeneralsX @build BenderAI 10/02/2026 - Platform-specific DLL/SO/DYLIB loading (Phase 5: macOS)
+#if defined(__vita__)
+		// PS Vita: Direct3D 8 is implemented on vitaGL by Platform/Vita/d3d8 and linked statically.
+		Direct3DCreate8Ptr = Direct3DCreate8;
+#else
 #ifdef _WIN32
 		D3D8Lib = LoadLibrary("D3D8.DLL");
 #elif defined(__APPLE__)
@@ -665,6 +715,7 @@ bool DX8Wrapper::Init(void * hwnd, bool lite)
 			fprintf(stderr, "ERROR: DX8Wrapper::Init() - Failed to get Direct3DCreate8 function\n");
 			return false;
 		}
+#endif // !__vita__
 
 		/*
 		** Create the D3D interface object
@@ -789,6 +840,7 @@ void DX8Wrapper::Set_Default_Global_Render_States()
 void DX8Wrapper::Invalidate_Cached_Render_States()
 {
 	render_state_changed=0;
+	EnvironmentLightCount=-1;
 
 	int a;
 	for (a=0;a<sizeof(RenderStates)/sizeof(unsigned);++a) {
@@ -2563,6 +2615,7 @@ void DX8Wrapper::Draw(
 		WWASSERT(0);
 		break;
 	}
+
 }
 
 // ----------------------------------------------------------------------------
@@ -3390,6 +3443,7 @@ void DX8Wrapper::Compute_Caps(WW3DFormat display_format)
 
 void DX8Wrapper::Set_Light(unsigned index, const D3DLIGHT8* light)
 {
+	EnvironmentLightCount=-1;
 	if (light) {
 		render_state.Lights[index]=*light;
 		render_state.LightEnable[index]=true;
@@ -3495,6 +3549,21 @@ void DX8Wrapper::Set_Light_Environment(LightEnvironmentClass* light_env)
 #endif
 		}
 
+		// GeneralsX @performance Claude 13/10/2026 Every mesh sets its light environment, and for
+		// nearly all of them it is the sun and nothing else, the same as for the mesh before. The
+		// lights were made and set again each time, four of them, and each went down to the device
+		// to be compared there: a thirtieth of a frame on the PS Vita. If the lights of the render
+		// state are still those of the last environment, and this one has the same, they stay.
+		if (light_count==EnvironmentLightCount) {
+			bool same=true;
+			for (int i=0;i<light_count && same;++i) {
+				same=EnvironmentLights[i].Is(*light_env,i);
+			}
+			if (same) {
+				return;
+			}
+		}
+
 		D3DLIGHT8 light;
 		int l=0;
 		for (;l<light_count;++l) {
@@ -3546,6 +3615,12 @@ void DX8Wrapper::Set_Light_Environment(LightEnvironmentClass* light_env)
 		for (;l<4;++l) {
 			Set_Light(l,nullptr);
 		}
+
+		// Set_Light() has just said that the lights are nobody's; they are this environment's.
+		for (l=0;l<light_count;++l) {
+			EnvironmentLights[l].Set(*light_env,l);
+		}
+		EnvironmentLightCount=light_count;
 	}
 /*	else {
 		for (int l=0;l<4;++l) {
@@ -4283,6 +4358,8 @@ void DX8Wrapper::Apply_Default_State()
 		SNAPSHOT_SAY(("Clearing light %d to null",index));
 		Set_DX8_Light(index,nullptr);
 	}
+	// GeneralsX @bugfix Claude 15/10/2026 The device's lights are off now, past the render state.
+	EnvironmentLightCount=-1;
 
 	// set up simple default TSS
 	Vector4 vconst[MAX_VERTEX_SHADER_CONSTANTS];

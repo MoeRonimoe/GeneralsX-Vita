@@ -43,7 +43,8 @@ static inline char *lstrcpyn(char *destination, const char *source, int count)
 
 // GeneralsX @TheSuperHackers @build BenderAI 11/02/2026 Only define strupr/strrev if not already provided by compat headers
 // Note: Check for macro definition, not function existence
-#if !defined(strupr)
+// newlib (PS Vita) declares strupr() in <string.h>
+#if !defined(strupr) && !defined(__vita__)
 static char *strupr(char *str)
 {
     for (int i = 0; i < strlen(str); i++)

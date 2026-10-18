@@ -104,6 +104,8 @@ static Bool tryAutoDetectLanguage(AsciiString& val)
 		{ "Brazilian.big",   "brazilian" },
 		{ "English.big",     "english"   },
 		{ "German.big",      "german"    },
+		// The German retail and Steam release keeps its texts under Data\German2.
+		{ "German2.big",     "german2"   },
 		{ "French.big",      "french"    },
 		{ "Spanish.big",     "spanish"   },
 		{ "Chinese.big",     "chinese"   },

@@ -324,8 +324,13 @@ Int HeightMapRenderObjClass::updateVB(DX8VertexBufferClass	*pVB, VERTEX_FORMAT *
 			lightRay[lightIndex].Set(-lightPos.x, -lightPos.y, -lightPos.z);
 		}
 
-		DX8VertexBufferClass::WriteLockClass lockVtxBuffer(pVB);
-		VERTEX_FORMAT *vbHardware = (VERTEX_FORMAT*)lockVtxBuffer.Get_Vertex_Array();
+		// GeneralsX @performance Claude 13/10/2026 Only the rows that are written are locked. A lock
+		// of everything says that everything may have changed, and a driver that keeps the buffer
+		// elsewhere has to take all of it again: on the PS Vita 4096 vertices were copied three
+		// times and their colors reordered whenever the view moved by a cell.
+		const Int firstLockedVertex = (y0-originY)*vertsPerRow;
+		DX8VertexBufferClass::AppendLockClass lockVtxBuffer(pVB, firstLockedVertex, (y1-y0)*vertsPerRow);
+		VERTEX_FORMAT *vbHardware = (VERTEX_FORMAT*)lockVtxBuffer.Get_Vertex_Array() - firstLockedVertex;
 		VERTEX_FORMAT *vBase = data;
 		// Note that we are building the vertex buffer data in the memory buffer, data.
 		// At the bottom, we will copy the final vertex data for one cell into the
@@ -563,8 +568,30 @@ Int HeightMapRenderObjClass::updateVBForLight(DX8VertexBufferClass	*pVB, VERTEX_
 		assert(x0 >= originX && y0 >= originY && x1>x0 && y1>y0 && x1<=originX+VERTEX_BUFFER_TILE_LENGTH && y1<=originY+VERTEX_BUFFER_TILE_LENGTH);
 #endif
 
-		DX8VertexBufferClass::WriteLockClass lockVtxBuffer(pVB);
-		VERTEX_FORMAT *vBase = (VERTEX_FORMAT*)lockVtxBuffer.Get_Vertex_Array();
+		// GeneralsX @performance Claude 13/10/2026 Only the rows a light reaches are locked, see
+		// updateVB(). This runs for every block near a light on every frame the light is on: an
+		// explosion or a muzzle flash cost a thirtieth of the frame for the ground under it.
+		Int firstRow = y1;
+		Int lastRow = y0-1;
+		for (j=y0; j<y1; j++)
+		{
+			const Int yCoord = getYWithOrigin(j)+m_map->getDrawOrgY()-m_map->getBorderSizeInline();
+			for (k=0; k<numLights; k++) {
+				if ((pLights[k]->m_minY <= yCoord+1 && pLights[k]->m_maxY >= yCoord) ||
+					(pLights[k]->m_prevMinY <= yCoord+1 && pLights[k]->m_prevMaxY >= yCoord)) {
+					if (j < firstRow)
+						firstRow = j;
+					lastRow = j;
+					break;
+				}
+			}
+		}
+		if (lastRow < firstRow)
+			return 0;
+
+		const Int firstLockedVertex = (firstRow-originY)*vertsPerRow;
+		DX8VertexBufferClass::AppendLockClass lockVtxBuffer(pVB, firstLockedVertex, (lastRow+1-firstRow)*vertsPerRow);
+		VERTEX_FORMAT *vBase = (VERTEX_FORMAT*)lockVtxBuffer.Get_Vertex_Array() - firstLockedVertex;
 		VERTEX_FORMAT *vb;
 
 		for (j=y0; j<y1; j++)
@@ -1623,9 +1650,146 @@ static void calcVis(const FrustumClass & frustum, WorldHeightMap *pMap, Int minX
 	}
 }
 
+// GeneralsX @bugfix Claude 15/10/2026 Helpers of HeightMapRenderObjClass::findVisibleArea().
+static void includeInArea(const Vector3 &point, Real &minX, Real &minY, Real &maxX, Real &maxY)
+{
+	if (point.X < minX) minX = point.X;
+	if (point.X > maxX) maxX = point.X;
+	if (point.Y < minY) minY = point.Y;
+	if (point.Y > maxY) maxY = point.Y;
+}
 
+/// The area covered by the part of a view between two heights: its corners within those heights
+/// and the points where its edges cross them. False if no part of the view is between them.
+static Bool findViewAreaBetweenHeights(const FrustumClass &view, Real bottom, Real top,
+	Real &minX, Real &minY, Real &maxX, Real &maxY)
+{
+	static const Int edges[12][2] = {
+		{0,1}, {1,3}, {3,2}, {2,0},	// near rectangle
+		{4,5}, {5,7}, {7,6}, {6,4},	// far rectangle
+		{0,4}, {1,5}, {2,6}, {3,7}	// sides
+	};
+	minX = 1.0e30f;
+	minY = 1.0e30f;
+	maxX = -1.0e30f;
+	maxY = -1.0e30f;
+	Int i;
+	for (i=0; i<8; i++) {
+		if (view.Corners[i].Z >= bottom && view.Corners[i].Z <= top)
+			includeInArea(view.Corners[i], minX, minY, maxX, maxY);
+	}
+	const Real levels[2] = { bottom, top };
+	for (i=0; i<12; i++) {
+		const Vector3 &from = view.Corners[edges[i][0]];
+		const Vector3 &to = view.Corners[edges[i][1]];
+		for (Int k=0; k<2; k++) {
+			if ((from.Z - levels[k]) * (to.Z - levels[k]) < 0.0f) {
+				const Real t = (levels[k] - from.Z) / (to.Z - from.Z);
+				includeInArea(from + (to - from) * t, minX, minY, maxX, maxY);
+			}
+		}
+	}
+	return minX <= maxX;
+}
 
+static Int placeDrawnTerrain(Int visibleMin, Int visibleMax, Int drawSize, Int cameraCell)
+{
+	if (visibleMax - visibleMin + 1 <= drawSize)
+		return (visibleMax + visibleMin)/2 - drawSize/2;
 
+	// The drawn terrain cannot hold all of it: the side nearer to the camera is kept, it fills more of the screen.
+	if (cameraCell - visibleMin <= visibleMax - cameraCell)
+		return visibleMin;
+	return visibleMax - drawSize + 1;
+}
+
+//=============================================================================
+// HeightMapRenderObjClass::findVisibleArea
+//=============================================================================
+/** GeneralsX @bugfix Claude 15/10/2026 Where the terrain of the scripted camera is drawn. The
+original centering in updateCenter() searches for visible cells only around the points where the
+corners of the view meet the lowest ground. A camera close to the ground that looks up at the sky,
+as in the first scene of the first training mission, meets it far away or not at all, and the
+ground around the camera was not drawn. Here the search covers all of the view between the lowest
+and the highest ground of the map, up to the distance the largest drawn terrain can hold. Its
+result does not depend on the terrain drawn now, so the view can grow that once to what it needs
+(W3DView::updateTerrain). */
+//=============================================================================
+void HeightMapRenderObjClass::findVisibleArea(CameraClass *camera, Int &newOrgX, Int &newOrgY)
+{
+	// The view up to a distance whose area fits into the largest drawn terrain in any direction.
+	const Real reach = 0.9f * (WorldHeightMap::LOW_ANGLE_DRAW_WIDTH - 1) * MAP_XY_FACTOR;
+	Vector2 viewMin, viewMax;
+	camera->Get_View_Plane(viewMin, viewMax);
+	Real nearClip, farClip;
+	camera->Get_Clip_Planes(nearClip, farClip);
+	FrustumClass view;
+	view.Init(camera->Get_Transform(), viewMin, viewMax, nearClip, reach);
+
+	// The area of the part of the view between the lowest and the highest ground.
+	const Real layerBottom = getMinHeight();
+	const Real layerTop = getMaxHeight();
+	Real minX, minY, maxX, maxY;
+	if (!findViewAreaBetweenHeights(view, layerBottom, layerTop, minX, minY, maxX, maxY)) {
+		// Only sky in view: the drawn terrain stays where it is.
+		m_visibleAreaSize.x = 0;
+		m_visibleAreaSize.y = 0;
+		newOrgX = m_map->getDrawOrgX();
+		newOrgY = m_map->getDrawOrgY();
+		return;
+	}
+
+	const Int border = m_map->getBorderSizeInline();
+	const Int cellMinX = std::max(WWMath::Float_To_Int_Floor(minX / MAP_XY_FACTOR) + border - 1, 0);
+	const Int cellMinY = std::max(WWMath::Float_To_Int_Floor(minY / MAP_XY_FACTOR) + border - 1, 0);
+	const Int cellMaxX = std::min(WWMath::Float_To_Int_Floor(maxX / MAP_XY_FACTOR) + border + 2, m_map->getXExtent() - 1);
+	const Int cellMaxY = std::min(WWMath::Float_To_Int_Floor(maxY / MAP_XY_FACTOR) + border + 2, m_map->getYExtent() - 1);
+
+	// The cells of that area that are in view at the height they have.
+	visMinX = m_map->getXExtent();
+	visMinY = m_map->getYExtent();
+	visMaxX = 0;
+	visMaxY = 0;
+	const Int limit = std::min((cellMaxX - cellMinX)/2, WIDE_STEP/2);
+	calcVis(view, m_map, cellMinX, cellMinY, cellMaxX, cellMaxY, limit);
+
+	// calcVis() looks at single cells several cells apart. Close to the camera the view is narrower
+	// than that, and a slope beside the camera whose cells are all above or below the view was left
+	// out: a mountain at the edge of the first scene of the first training mission was not drawn and
+	// the ground behind it showed from below. All of the view up to some distance is included.
+	const Real nearReach = 64 * MAP_XY_FACTOR;
+	FrustumClass nearView;
+	nearView.Init(camera->Get_Transform(), viewMin, viewMax, nearClip, nearReach);
+	if (findViewAreaBetweenHeights(nearView, layerBottom, layerTop, minX, minY, maxX, maxY)) {
+		const Int nearMinX = std::max(WWMath::Float_To_Int_Floor(minX / MAP_XY_FACTOR) + border - 1, 0);
+		const Int nearMinY = std::max(WWMath::Float_To_Int_Floor(minY / MAP_XY_FACTOR) + border - 1, 0);
+		const Int nearMaxX = std::min(WWMath::Float_To_Int_Floor(maxX / MAP_XY_FACTOR) + border + 2, m_map->getXExtent() - 1);
+		const Int nearMaxY = std::min(WWMath::Float_To_Int_Floor(maxY / MAP_XY_FACTOR) + border + 2, m_map->getYExtent() - 1);
+		if (nearMinX <= nearMaxX && nearMinY <= nearMaxY) {
+			visMinX = std::min(visMinX, nearMinX);
+			visMinY = std::min(visMinY, nearMinY);
+			visMaxX = std::max(visMaxX, nearMaxX);
+			visMaxY = std::max(visMaxY, nearMaxY);
+		}
+	}
+
+	if (visMaxX < visMinX || visMaxY < visMinY) {
+		m_visibleAreaSize.x = 0;
+		m_visibleAreaSize.y = 0;
+		newOrgX = m_map->getDrawOrgX();
+		newOrgY = m_map->getDrawOrgY();
+		return;
+	}
+
+	m_visibleAreaSize.x = visMaxX - visMinX + 1;
+	m_visibleAreaSize.y = visMaxY - visMinY + 1;
+
+	const Vector3 cameraLocation = camera->Get_Position();
+	const Int cameraCellX = WWMath::Float_To_Int_Floor(cameraLocation.X / MAP_XY_FACTOR) + border;
+	const Int cameraCellY = WWMath::Float_To_Int_Floor(cameraLocation.Y / MAP_XY_FACTOR) + border;
+	newOrgX = placeDrawnTerrain(visMinX, visMaxX, m_x, cameraCellX);
+	newOrgY = placeDrawnTerrain(visMinY, visMaxY, m_y, cameraCellY);
+}
 
 //=============================================================================
 // HeightMapRenderObjClass::updateCenter
@@ -1666,7 +1830,14 @@ void HeightMapRenderObjClass::updateCenter(CameraClass *camera, const Vector3 *c
 	Int newOrgX;
 	Int newOrgY;
 
-	if (cameraPitch > ViewDefaultLowPitchRadians)
+	if (m_centerOnVisibleArea)
+	{
+		// GeneralsX @bugfix Claude 15/10/2026 The scripted camera keeps the regular draw size at a low pitch,
+		// which is too small for the approximation below: in the cutscenes of the first training mission trees
+		// and buildings hung in the sky at the far corners. Its terrain is placed on the ground it can see.
+		findVisibleArea(camera, newOrgX, newOrgY);
+	}
+	else if (cameraPitch > ViewDefaultLowPitchRadians)
 	{
 		// TheSuperHackers @info This is the original code to determine the center position for the visible terrain area.
 		// It is relatively expensive and breaks when the frustum planes can no longer intersect with the terrain at low camera
@@ -1873,11 +2044,20 @@ void HeightMapRenderObjClass::updateCenter(CameraClass *camera, const Vector3 *c
 //=============================================================================
 /** Renders (draws) the terrain. */
 //=============================================================================
-//DECLARE_PERF_TIMER(Terrain_Render)
+DECLARE_PERF_TIMER(Terrain_Render)
+// GeneralsX @feature Claude 11/10/2026 Timers for the parts of drawing the terrain, read by the PS Vita frame profile.
+DECLARE_PERF_TIMER(Terrain_extraBlend)
+DECLARE_PERF_TIMER(Terrain_roads)
+DECLARE_PERF_TIMER(Terrain_props)
+DECLARE_PERF_TIMER(Terrain_scorches)
+DECLARE_PERF_TIMER(Terrain_bridges)
+DECLARE_PERF_TIMER(Terrain_tracks)
+DECLARE_PERF_TIMER(Terrain_shroudPass)
+DECLARE_PERF_TIMER(Terrain_bibs)
 
 void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 {
-	//USE_PERF_TIMER(Terrain_Render)
+	USE_PERF_TIMER(Terrain_Render)
 
 	Int i,j,devicePasses;
 	W3DShaderManager::ShaderTypes st;
@@ -2075,7 +2255,10 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 
 		//Do additional pass over any tiles that have 3 textures blended together.
 		if (TheGlobalData->m_use3WayTerrainBlends)
-			renderExtraBlendTiles();
+			{
+				USE_PERF_TIMER(Terrain_extraBlend)
+				renderExtraBlendTiles();
+			}
 
 		Int yCoordMin = m_map->getDrawOrgY();
 		Int yCoordMax = m_y+m_map->getDrawOrgY()-1;
@@ -2092,19 +2275,28 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 			if (Scene) {
 				RTS3DScene *pMyScene = (RTS3DScene *)Scene;
 				RefRenderObjListIterator pDynamicLightsIterator(pMyScene->getDynamicLights());
-				m_roadBuffer->drawRoads(&rinfo.Camera, doCloud?m_stageTwoTexture:nullptr, TheGlobalData->m_useLightMap?m_stageThreeTexture:nullptr,
-					m_disableTextures,xCoordMin-m_map->getBorderSizeInline(), xCoordMax-m_map->getBorderSizeInline(), yCoordMin-m_map->getBorderSizeInline(), yCoordMax-m_map->getBorderSizeInline(), &pDynamicLightsIterator);
+				{
+					USE_PERF_TIMER(Terrain_roads)
+					m_roadBuffer->drawRoads(&rinfo.Camera, doCloud?m_stageTwoTexture:nullptr, TheGlobalData->m_useLightMap?m_stageThreeTexture:nullptr,
+						m_disableTextures,xCoordMin-m_map->getBorderSizeInline(), xCoordMax-m_map->getBorderSizeInline(), yCoordMin-m_map->getBorderSizeInline(), yCoordMax-m_map->getBorderSizeInline(), &pDynamicLightsIterator);
+				}
 			}
 		}
 	#endif
 	if (m_propBuffer) {
-		m_propBuffer->drawProps(rinfo);
+		{
+			USE_PERF_TIMER(Terrain_props)
+			m_propBuffer->drawProps(rinfo);
+		}
 	}
 		DX8Wrapper::Set_Texture(0,nullptr);
 		DX8Wrapper::Set_Texture(1,nullptr);
 		m_stageTwoTexture->restore();
 
-		drawScorches();
+		{
+			USE_PERF_TIMER(Terrain_scorches)
+			drawScorches();
+		}
 
 		DX8Wrapper::Set_Texture(0,nullptr);
 		DX8Wrapper::Set_Texture(1,nullptr);
@@ -2112,15 +2304,24 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
 		ShaderClass::Invalidate();
 		DX8Wrapper::Apply_Render_State_Changes();
 
-		m_bridgeBuffer->drawBridges(&rinfo.Camera, m_disableTextures, doCloud?m_stageTwoTexture:nullptr);
+		{
+			USE_PERF_TIMER(Terrain_bridges)
+			m_bridgeBuffer->drawBridges(&rinfo.Camera, m_disableTextures, doCloud?m_stageTwoTexture:nullptr);
+		}
 
 		if (TheTerrainTracksRenderObjClassSystem)
-			TheTerrainTracksRenderObjClassSystem->flush();
+			{
+				USE_PERF_TIMER(Terrain_tracks)
+				TheTerrainTracksRenderObjClassSystem->flush();
+			}
 
 		if (m_shroud && rinfo.Additional_Pass_Count())
 		{
 			rinfo.Peek_Additional_Pass(0)->Install_Materials();
-			renderTerrainPass(&rinfo.Camera);
+			{
+				USE_PERF_TIMER(Terrain_shroudPass)
+				renderTerrainPass(&rinfo.Camera);
+			}
 			rinfo.Peek_Additional_Pass(0)->UnInstall_Materials();
 		}
 
@@ -2133,7 +2334,10 @@ void HeightMapRenderObjClass::Render(RenderInfoClass & rinfo)
   if ( m_waypointBuffer )
 	  m_waypointBuffer->drawWaypoints(rinfo);
 
-	m_bibBuffer->renderBibs();
+	{
+		USE_PERF_TIMER(Terrain_bibs)
+		m_bibBuffer->renderBibs();
+	}
 
 	// We do some custom blending, so tell the shader class to reset everything.
 	DX8Wrapper::Set_Texture(0,nullptr);

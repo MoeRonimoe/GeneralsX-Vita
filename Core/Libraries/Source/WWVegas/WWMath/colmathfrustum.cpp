@@ -47,6 +47,17 @@
 #include "frustum.h"
 #include "WWDebug/wwdebug.h"
 
+#if defined(__ARM_NEON)
+#include "colmathfrustumneon.h"
+
+// colmathfrustumneon.h reads planes, spheres and boxes as numbers in a row, and gives its answers
+// its own names.
+static_assert(sizeof(PlaneClass) == 4 * sizeof(float) && sizeof(SphereClass) == 4 * sizeof(float)
+	&& sizeof(AABoxClass) == 6 * sizeof(float), "colmathfrustumneon.h counts on these layouts");
+static_assert(FRUSTUM_NEON_OUTSIDE == CollisionMath::OUTSIDE && FRUSTUM_NEON_INSIDE == CollisionMath::INSIDE
+	&& FRUSTUM_NEON_OVERLAPPED == CollisionMath::OVERLAPPED, "colmathfrustumneon.h counts on these values");
+#endif
+
 
 // TODO: Most of these overlap functions actually do not catch all cases of when
 // the primitive is outside of the frustum...
@@ -95,6 +106,14 @@ CollisionMath::Overlap_Test(const FrustumClass & frustum,const TriClass & tri)
 CollisionMath::OverlapType
 CollisionMath::Overlap_Test(const FrustumClass & frustum,const SphereClass & sphere)
 {
+#if defined(__ARM_NEON)
+	// GeneralsX @performance Claude 13/10/2026 Four planes at a time, see colmathfrustumneon.h.
+	// A sphere with a negative radius is nothing that can be seen, and is left to the test below.
+	if (sphere.Radius >= 0.0f) {
+		return (OverlapType)Frustum_Neon_Sphere(&frustum.Planes[0].N.X,&sphere.Center.X);
+	}
+#endif
+
 	int mask = 0;
 
 	// TODO: doesn't catch all cases...
@@ -115,6 +134,11 @@ CollisionMath::Overlap_Test(const FrustumClass & frustum,const SphereClass & sph
 CollisionMath::OverlapType
 CollisionMath::Overlap_Test(const FrustumClass & frustum,const AABoxClass & box)
 {
+#if defined(__ARM_NEON)
+	// GeneralsX @performance Claude 13/10/2026 Four planes at a time, see colmathfrustumneon.h.
+	return (OverlapType)Frustum_Neon_Box(&frustum.Planes[0].N.X,&box.Center.X,COINCIDENCE_EPSILON);
+#endif
+
 	int mask = 0;
 
 	// TODO: doesn't catch all cases...

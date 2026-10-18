@@ -2101,7 +2101,15 @@ void W3DModelDraw::doDrawModule(const Matrix3D* transformMtx)
 	{
 		Matrix3D mtx = *transformMtx;
 		adjustTransformMtx(mtx);
-		m_renderObject->Set_Transform(mtx);
+
+		// GeneralsX @performance Claude 13/10/2026 Most of what is drawn stands still, and setting
+		// a transform makes a model work out every bone, every sub-object and every bounding volume
+		// again when it is next looked at, to the same result as before. Samples of the game's
+		// thread on the PS Vita had a ninth of a frame under HLodClass::Update_Sub_Object_Transforms().
+		// A model that is animated works its hierarchy out when it is rendered whether this was
+		// called or not (Animatable3DObjClass::Render), and what moves a bone says so itself.
+		if (!(mtx == m_renderObject->Get_Transform()))
+			m_renderObject->Set_Transform(mtx);
 	}
 
 	handleClientTurretPositioning();
@@ -2907,6 +2915,7 @@ static Bool turretNamesDiffer(const ModelConditionInfo* a, const ModelConditionI
 void W3DModelDraw::setModelState(const ModelConditionInfo* newState)
 {
 	DEBUG_ASSERTCRASH(newState, ("invalid state in W3DModelDraw::setModelState"));
+
 
 #ifdef DEBUG_OBJECT_ID_EXISTS
 	if (getDrawable() && getDrawable()->getObject() && getDrawable()->getObject()->getID() == TheObjectIDToDebug)

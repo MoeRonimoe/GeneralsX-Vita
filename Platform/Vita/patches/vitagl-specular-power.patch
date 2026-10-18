@@ -1,0 +1,101 @@
+diff --git a/source/shaders/ffp_ext_f.h b/source/shaders/ffp_ext_f.h
+index 3a81da9..e1ff5c7 100644
+--- a/source/shaders/ffp_ext_f.h
++++ b/source/shaders/ffp_ext_f.h
+@@ -57,7 +57,7 @@ void point_light(short i, float3 normal, float3 position, float4 inout Ambient,
+ 	Diffuse += Blights_diffuses[i] * nDotVP * attenuation;
+ 	if (nDotVP != 0.0f) {
+ 		float nDotHV = max(0.0f, dot(normal, normalize(VP + float3(0.0f, 0.0f, 1.0f))));
+-		Specular += Clights_speculars[i] * pow(nDotHV, Gshininess) * attenuation;
++		Specular += Clights_speculars[i] * pow(max(nDotHV, 0.0001f), Gshininess) * attenuation;
+ 	}
+ }
+ 
+@@ -69,7 +69,7 @@ void directional_light(short i, float3 normal, float3 position, float4 inout Amb
+ 	Diffuse += Blights_diffuses[i] * nDotVP;
+ 	if (nDotVP != 0.0f) {
+ 		float nDotHV = max(0.0f, dot(normal, normalize(VP + float3(0.0f, 0.0f, 1.0f))));
+-		Specular += Clights_speculars[i] * pow(nDotHV, Gshininess);
++		Specular += Clights_speculars[i] * pow(max(nDotHV, 0.0001f), Gshininess);
+ 	}
+ }
+ 
+diff --git a/source/shaders/ffp_ext_v.h b/source/shaders/ffp_ext_v.h
+index 5cb9474..40117e2 100644
+--- a/source/shaders/ffp_ext_v.h
++++ b/source/shaders/ffp_ext_v.h
+@@ -65,7 +65,7 @@ void point_light(short i, float3 normal, float3 position, float4 inout Ambient,
+ 	Diffuse += Blights_diffuses[i] * nDotVP * attenuation;
+ 	if (nDotVP != 0.0f) {
+ 		float nDotHV = max(0.0f, dot(normal, normalize(VP + float3(0.0f, 0.0f, 1.0f))));
+-		Specular += Clights_speculars[i] * pow(nDotHV, Gshininess) * attenuation;
++		Specular += Clights_speculars[i] * pow(max(nDotHV, 0.0001f), Gshininess) * attenuation;
+ 	}
+ }
+ 
+@@ -77,7 +77,7 @@ void directional_light(short i, float3 normal, float3 position, float4 inout Amb
+ 	Diffuse += Blights_diffuses[i] * nDotVP;
+ 	if (nDotVP != 0.0f) {
+ 		float nDotHV = max(0.0f, dot(normal, normalize(VP + float3(0.0f, 0.0f, 1.0f))));
+-		Specular += Clights_speculars[i] * pow(nDotHV, Gshininess);
++		Specular += Clights_speculars[i] * pow(max(nDotHV, 0.0001f), Gshininess);
+ 	}
+ }
+ 
+diff --git a/source/shaders/ffp_f.h b/source/shaders/ffp_f.h
+index 865627b..9c36468 100644
+--- a/source/shaders/ffp_f.h
++++ b/source/shaders/ffp_f.h
+@@ -54,7 +54,7 @@ void point_light(short i, float3 normal, float3 position, float4 inout Ambient,
+ 	Diffuse += Blights_diffuses[i] * nDotVP * attenuation;
+ 	if (nDotVP != 0.0f) {
+ 		float nDotHV = max(0.0f, dot(normal, normalize(VP + float3(0.0f, 0.0f, 1.0f))));
+-		Specular += Clights_speculars[i] * pow(nDotHV, Gshininess) * attenuation;
++		Specular += Clights_speculars[i] * pow(max(nDotHV, 0.0001f), Gshininess) * attenuation;
+ 	}
+ }
+ 
+@@ -66,7 +66,7 @@ void directional_light(short i, float3 normal, float3 position, float4 inout Amb
+ 	Diffuse += Blights_diffuses[i] * nDotVP;
+ 	if (nDotVP != 0.0f) {
+ 		float nDotHV = max(0.0f, dot(normal, normalize(VP + float3(0.0f, 0.0f, 1.0f))));
+-		Specular += Clights_speculars[i] * pow(nDotHV, Gshininess);
++		Specular += Clights_speculars[i] * pow(max(nDotHV, 0.0001f), Gshininess);
+ 	}
+ }
+ 
+diff --git a/source/shaders/ffp_v.h b/source/shaders/ffp_v.h
+index d4b4294..f7cd6cf 100644
+--- a/source/shaders/ffp_v.h
++++ b/source/shaders/ffp_v.h
+@@ -62,7 +62,7 @@ void point_light(short i, float3 normal, float3 position, float4 inout Ambient,
+ 	Diffuse += Blights_diffuses[i] * nDotVP * attenuation;
+ 	if (nDotVP != 0.0f) {
+ 		float nDotHV = max(0.0f, dot(normal, normalize(VP + float3(0.0f, 0.0f, 1.0f))));
+-		Specular += Clights_speculars[i] * pow(nDotHV, Gshininess) * attenuation;
++		Specular += Clights_speculars[i] * pow(max(nDotHV, 0.0001f), Gshininess) * attenuation;
+ 	}
+ }
+ 
+@@ -74,7 +74,7 @@ void directional_light(short i, float3 normal, float3 position, float4 inout Amb
+ 	Diffuse += Blights_diffuses[i] * nDotVP;
+ 	if (nDotVP != 0.0f) {
+ 		float nDotHV = max(0.0f, dot(normal, normalize(VP + float3(0.0f, 0.0f, 1.0f))));
+-		Specular += Clights_speculars[i] * pow(nDotHV, Gshininess);
++		Specular += Clights_speculars[i] * pow(max(nDotHV, 0.0001f), Gshininess);
+ 	}
+ }
+ 
+diff --git a/source/shared.h b/source/shared.h
+index cbacdc3..92f9d9e 100644
+--- a/source/shared.h
++++ b/source/shared.h
+@@ -299,7 +299,7 @@ extern int NEW_DISPLAY_HEIGHT; // Requested new display height in pixels
+ 
+ // Fixed-function pipeline shader cache settings
+ #define FFP_SHADER_CACHE_MAGIC 31 // This must be increased whenever ffp shader sources or shader mask/combiner mask changes
+-#define FFP_SHADER_CACHE_PATCH 1 // GeneralsX: revision of its changes to the ffp shaders, increased whenever they change
++#define FFP_SHADER_CACHE_PATCH 3 // GeneralsX: revision of its changes to the ffp shaders, increased whenever they change
+ extern char ffp_shader_cache_path[256]; // Folder of the compiled ffp shaders
+ 
+ // Custom shaders pipeline shader cache settings

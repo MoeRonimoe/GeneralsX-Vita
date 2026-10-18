@@ -119,6 +119,10 @@ static Int xpSign(const Vector2 &v1, const Vector2 &v2) {
 	return 0;
 }
 
+// GeneralsX @performance Claude 11/10/2026 Backport from Zero Hour: the road buffers are only refilled
+// when the set of visible segments changes, so they no longer need to be dynamic.
+static Bool s_dynamic = false;
+
 //-----------------------------------------------------------------------------
 //         Private Class
 //-----------------------------------------------------------------------------
@@ -179,8 +183,8 @@ void RoadType::loadTexture(AsciiString path, Int ID)
 	m_roadTexture->Get_Filter().Set_U_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_REPEAT);
 	m_roadTexture->Get_Filter().Set_V_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_REPEAT);
 
-	m_vertexRoad=NEW_REF(DX8VertexBufferClass,(DX8_FVF_XYZDUV1,TheGlobalData->m_maxRoadVertex+4,DX8VertexBufferClass::USAGE_DYNAMIC));
-	m_indexRoad=NEW_REF(DX8IndexBufferClass,(TheGlobalData->m_maxRoadIndex+4, DX8IndexBufferClass::USAGE_DYNAMIC));
+	m_vertexRoad=NEW_REF(DX8VertexBufferClass,(DX8_FVF_XYZDUV1,TheGlobalData->m_maxRoadVertex+4, (s_dynamic?DX8VertexBufferClass::USAGE_DYNAMIC:DX8VertexBufferClass::USAGE_DEFAULT)));
+	m_indexRoad=NEW_REF(DX8IndexBufferClass,(TheGlobalData->m_maxRoadIndex+4, (s_dynamic?DX8IndexBufferClass::USAGE_DYNAMIC:DX8IndexBufferClass::USAGE_DEFAULT)));
 	m_numRoadVertices=0;
 	m_numRoadIndices=0;
 
@@ -214,12 +218,19 @@ void RoadType::loadTestTexture()
 //=============================================================================
 /** Nulls index & vertex data. */
 //=============================================================================
-RoadSegment::RoadSegment()
+RoadSegment::RoadSegment() :
+m_curveRadius(0.0f),
+m_type(SEGMENT),
+m_scale(1.0f),
+m_widthInTexture(1.0f),
+m_uniqueID(0),
+m_visible(false),
+m_numVertex(0),
+m_vb(nullptr),
+m_numIndex(0),
+m_ib(nullptr),
+m_bounds(Vector3(0.0f, 0.0f, 0.0f), 1.0f)
 {
-	m_numVertex = 0;
-	m_vb = nullptr;
-	m_numIndex = 0;
-	m_ib = nullptr;
 }
 
 //=============================================================================
@@ -782,25 +793,9 @@ void W3DRoadBuffer::loadLit4PtSection(RoadSegment *pRoad, UnsignedShort *ib, Ver
 	if (pRoad->m_uniqueID != m_curUniqueID) {
 		return;
 	}
-	// Throw out segs out of view.
-	if (pRoad->m_pt1.loc.X + pRoad->m_scale/2 < this->m_minX &&
-		pRoad->m_pt2.loc.X + pRoad->m_scale/2 < this->m_minX) {
+	if (!pRoad->m_visible) {
 		return;
 	}
-	if (pRoad->m_pt1.loc.X - pRoad->m_scale/2 > this->m_maxX &&
-		pRoad->m_pt2.loc.X - pRoad->m_scale/2 > this->m_maxX) {
-		return;
-	}
-	// Throw out segs out of view.
-	if (pRoad->m_pt1.loc.Y + pRoad->m_scale/2 < this->m_minY &&
-		pRoad->m_pt2.loc.Y + pRoad->m_scale/2 < this->m_minY) {
-		return;
-	}
-	if (pRoad->m_pt1.loc.Y - pRoad->m_scale/2 > this->m_maxY &&
-		pRoad->m_pt2.loc.Y - pRoad->m_scale/2 > this->m_maxY) {
-		return;
-	}
-
 	Int numLights = 0;
 	const Int maxLights = 8;
 	LightClass *lights[maxLights];
@@ -1241,13 +1236,30 @@ void W3DRoadBuffer::loadRoadsInVertexAndIndexBuffers()
 		this->m_roadTypes[m_curRoadType].setNumIndices(0);
 		return;
 	}
-	DX8IndexBufferClass::WriteLockClass lockIdxBuffer(m_roadTypes[m_curRoadType].getIB());
-	DX8VertexBufferClass::WriteLockClass lockVtxBuffer(m_roadTypes[m_curRoadType].getVB());
+
+	Int curRoad;
+
+	// GeneralsX @performance Claude 11/10/2026 Leave the buffers of a road type alone when none of its
+	// segments is visible. Locking them sends the whole buffer to the device again, and a map
+	// uses only a few of the road types.
+	Bool anyVisible = false;
+	for (curRoad=0; curRoad<m_numRoads; curRoad++) {
+		if (m_roads[curRoad].m_uniqueID == m_curUniqueID && m_roads[curRoad].m_visible) {
+			anyVisible = true;
+			break;
+		}
+	}
+	if (!anyVisible) {
+		this->m_roadTypes[m_curRoadType].setNumVertices(0);
+		this->m_roadTypes[m_curRoadType].setNumIndices(0);
+		return;
+	}
+
+	DX8IndexBufferClass::WriteLockClass lockIdxBuffer(m_roadTypes[m_curRoadType].getIB(), s_dynamic?D3DLOCK_DISCARD:0);
+	DX8VertexBufferClass::WriteLockClass lockVtxBuffer(m_roadTypes[m_curRoadType].getVB(), s_dynamic?D3DLOCK_DISCARD:0);
 	vb=(VertexFormatXYZDUV1*)lockVtxBuffer.Get_Vertex_Array();
 	ib = lockIdxBuffer.Get_Index_Array();
 	// Add to the index buffer & vertex buffer.
-
-	Int curRoad;
 
 	// Do road segments.
 	TCorner corner;
@@ -1260,6 +1272,49 @@ void W3DRoadBuffer::loadRoadsInVertexAndIndexBuffers()
 	}
 	this->m_roadTypes[m_curRoadType].setNumVertices(m_curNumRoadVertices);
 	this->m_roadTypes[m_curRoadType].setNumIndices(m_curNumRoadIndices);
+}
+
+//=============================================================================
+// W3DRoadBuffer::visibilityChanged
+//=============================================================================
+/** Returns true if any road segment's visibility changed. */
+//=============================================================================
+Bool W3DRoadBuffer::visibilityChanged(const IRegion2D &bounds)
+{
+	if ( !m_initialized) {
+		return false;
+	}
+	Bool visChanged = false;
+	Int curRoad;
+	// Do road segments.
+	for (curRoad=0; curRoad<m_numRoads; curRoad++) {
+		Bool curVis = m_roads[curRoad].m_visible;
+		Bool newVis = true;
+		Real halfScale = m_roads[curRoad].m_scale/2;
+		// Throw out segs out of view.
+		if (m_roads[curRoad].m_pt1.loc.X + halfScale < bounds.lo.x &&
+			m_roads[curRoad].m_pt2.loc.X + halfScale < bounds.lo.x) {
+			newVis = false;
+		}
+		if (m_roads[curRoad].m_pt1.loc.X - halfScale > bounds.hi.x &&
+			m_roads[curRoad].m_pt2.loc.X - halfScale > bounds.hi.x) {
+			newVis = false;
+		}
+		// Throw out segs out of view.
+		if (m_roads[curRoad].m_pt1.loc.Y + halfScale < bounds.lo.y &&
+			m_roads[curRoad].m_pt2.loc.Y + halfScale < bounds.lo.y) {
+			newVis = false;
+		}
+		if (m_roads[curRoad].m_pt1.loc.Y - halfScale > bounds.hi.y &&
+			m_roads[curRoad].m_pt2.loc.Y - halfScale > bounds.hi.y) {
+			newVis = false;
+		}
+		if (newVis != curVis) {
+			visChanged = true;
+		}
+		m_roads[curRoad].m_visible = newVis;
+	}
+	return visChanged;
 }
 
 //=============================================================================
@@ -1309,22 +1364,7 @@ void W3DRoadBuffer::loadRoadSegment(UnsignedShort *ib, VertexFormatXYZDUV1 *vb, 
 	if (pRoad->m_uniqueID != m_curUniqueID) {
 		return;
 	}
-	// Throw out segs out of view.
-	if (pRoad->m_pt1.loc.X + pRoad->m_scale/2 < this->m_minX &&
-		pRoad->m_pt2.loc.X + pRoad->m_scale/2 < this->m_minX) {
-		return;
-	}
-	if (pRoad->m_pt1.loc.X - pRoad->m_scale/2 > this->m_maxX &&
-		pRoad->m_pt2.loc.X - pRoad->m_scale/2 > this->m_maxX) {
-		return;
-	}
-	// Throw out segs out of view.
-	if (pRoad->m_pt1.loc.Y + pRoad->m_scale/2 < this->m_minY &&
-		pRoad->m_pt2.loc.Y + pRoad->m_scale/2 < this->m_minY) {
-		return;
-	}
-	if (pRoad->m_pt1.loc.Y - pRoad->m_scale/2 > this->m_maxY &&
-		pRoad->m_pt2.loc.Y - pRoad->m_scale/2 > this->m_maxY) {
+	if (!pRoad->m_visible) {
 		return;
 	}
 	Int curVertex = m_curNumRoadVertices;
@@ -3055,7 +3095,9 @@ W3DRoadBuffer::W3DRoadBuffer()	:
 	m_maxRoadTypes(8),
 	m_maxRoadVertex(1000),
 	m_maxRoadIndex(2000),
-	m_curRoadType(0)
+	m_curRoadType(0),
+	m_updateBuffers(false),
+	m_reloadBuffers(false)
 
 {
 	allocateRoadBuffers();
@@ -3148,6 +3190,8 @@ void W3DRoadBuffer::clearAllRoads()
 	if (m_roadTypes)
 	for (i=0; i<m_maxRoadTypes; i++) {
 		m_roadTypes[i].setStacking(0); // Reset stacking orders
+		m_roadTypes[i].setNumVertices(0);
+		m_roadTypes[i].setNumIndices(0);
 	}
 }
 //=============================================================================
@@ -3180,6 +3224,7 @@ void W3DRoadBuffer::loadRoads()
 	insertCrossTypeJoins();
 	preloadRoadsInVertexAndIndexBuffers();
 	m_updateBuffers = true;
+	m_reloadBuffers = true;
 	//ticks = ::GetTickCount() - ticks;
 	//char buf[256];
 	//sprintf(buf, "%d road segs, %d milisec.\n", m_numRoads, ticks);
@@ -3193,11 +3238,19 @@ void W3DRoadBuffer::loadRoads()
 //=============================================================================
 void W3DRoadBuffer::updateLighting()
 {
+	// Backport from Zero Hour: the roads are freed while the device is lost (alt-tab), and a
+	// terrain change in that time used to crash here.
+	if( !m_roads )
+	{
+		return;
+	}
 	Int curRoad;
 	// Do road segments.
 	for (curRoad=0; curRoad<m_numRoads; curRoad++) {
 		m_roads[curRoad].updateSegLighting();
 	}
+	m_updateBuffers = true;
+	m_reloadBuffers = true;
 }
 
 //=============================================================================
@@ -3218,10 +3271,11 @@ void W3DRoadBuffer::updateCenter()
 void W3DRoadBuffer::drawRoads(CameraClass * camera, TextureClass *cloudTexture, TextureClass *noiseTexture, Bool wireframe,
 															Int minX, Int maxX, Int minY, Int maxY, RefRenderObjListIterator *pDynamicLightsIterator)
 {
-	m_minX = minX*MAP_XY_FACTOR;
-	m_maxX = maxX*MAP_XY_FACTOR;
-	m_minY = minY*MAP_XY_FACTOR;
-	m_maxY = maxY*MAP_XY_FACTOR;
+	IRegion2D bounds;
+	bounds.lo.x = minX*MAP_XY_FACTOR;
+	bounds.hi.x = maxX*MAP_XY_FACTOR;
+	bounds.lo.y = minY*MAP_XY_FACTOR;
+	bounds.hi.y = maxY*MAP_XY_FACTOR;
 
 	Int i;
 
@@ -3249,6 +3303,18 @@ void W3DRoadBuffer::drawRoads(CameraClass * camera, TextureClass *cloudTexture, 
 	W3DShaderManager::setTexture(1,cloudTexture);	//cloud
 	W3DShaderManager::setTexture(2,noiseTexture);	//noise/lightmap
 
+	// GeneralsX @performance Claude 11/10/2026 Backport from Zero Hour: refill the buffers only when a
+	// segment came into view or left it, instead of on every frame. Unlike Zero Hour, changed
+	// roads or lighting refill them even while the view stands still.
+	Bool loadBuffers = m_reloadBuffers;
+	if (m_updateBuffers) {
+		if (visibilityChanged(bounds)) {
+			loadBuffers = true;
+		}
+	}
+	m_updateBuffers = false;
+	m_reloadBuffers = false;
+
 	for (stacking=0; stacking <= maxStacking; stacking++) {
 		for (i=0; i<m_maxRoadTypes; i++) {
 			if (stacking != m_roadTypes[i].getStacking()) {
@@ -3256,7 +3322,7 @@ void W3DRoadBuffer::drawRoads(CameraClass * camera, TextureClass *cloudTexture, 
 			}
 			m_curUniqueID = m_roadTypes[i].getUniqueID();
 			m_curRoadType = i;
-			loadRoadsInVertexAndIndexBuffers();
+			if (loadBuffers) loadRoadsInVertexAndIndexBuffers();
 			if (m_roadTypes[i].getNumIndices() == 0) continue;
 			if (wireframe) {
 				m_roadTypes[i].applyTexture();

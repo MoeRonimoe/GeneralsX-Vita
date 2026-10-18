@@ -42,7 +42,9 @@ static void drawFramerateBar();
 #include <io.h>
 #else
 #include <unistd.h> // access() for file existence checks
+#ifdef SAGE_USE_SDL3
 #include <SDL3/SDL.h> // For SDL_ShowWindow() on Linux
+#endif
 #endif
 #include <time.h>
 #include <vector>
@@ -112,6 +114,10 @@ static void drawFramerateBar();
 
 #include "GameLogic/ScriptEngine.h"		// For TheScriptEngine - jkmcd
 #include "GameLogic/GameLogic.h"
+
+#if defined(__vita__)
+#include <VitaPacing.h>
+#endif
 #ifdef DUMP_PERF_STATS
 #include "GameLogic/PartitionManager.h"
 #endif
@@ -1011,7 +1017,7 @@ void W3DDisplay::init()
 		}
 
 		// GeneralsX @bugfix felipebraz 16/02/2026 Show window after DirectX8/DXVK initialized
-		#ifndef _WIN32
+		#ifdef SAGE_USE_SDL3
 		extern SDL_Window* TheSDL3Window;
 		if (TheSDL3Window) {
 			fprintf(stderr, "DEBUG: Showing SDL3 window after WW3D init...\n");
@@ -2041,15 +2047,19 @@ void W3DDisplay::step()
 	stepViews();
 }
 
-//DECLARE_PERF_TIMER(BigAssRenderLoop)
+DECLARE_PERF_TIMER(BigAssRenderLoop)
+// GeneralsX @feature Claude 11/10/2026 Timers for the three parts of drawing a frame, read by the PS Vita frame profile.
+DECLARE_PERF_TIMER(W3DDisplay_drawViews)
+DECLARE_PERF_TIMER(W3DDisplay_drawInGameUI)
+DECLARE_PERF_TIMER(W3DDisplay_endRender)
 
 // W3DDisplay::draw ===========================================================
 /** Draw the entire W3D Display */
 //=============================================================================
-//DECLARE_PERF_TIMER(W3DDisplay_draw)
+DECLARE_PERF_TIMER(W3DDisplay_draw)
 void W3DDisplay::draw()
 {
-	//USE_PERF_TIMER(W3DDisplay_draw)
+	USE_PERF_TIMER(W3DDisplay_draw)
 
 	// GeneralsX @feature xxorza 15/04/2026 Process deferred window resize for pillarbox
 	DX8Wrapper::Pillarbox_Process_Resize();
@@ -2182,6 +2192,23 @@ AGAIN:
 		// limit the framerate, because while fast time is on, the game logic is running as fast as it can.
 	}
 
+#if defined(__vita__)
+	// GeneralsX @feature Claude 13/10/2026 A console that cannot draw 30 frames per second can keep
+	// the game at its speed by not drawing all of them, like the fast time above: the frame goes on
+	// without its picture and is over in half the time (VitaPacing.h). Only while a mission is
+	// being played; menus, loading screens and a game that stands still are always drawn, and so
+	// is what a mission shows by itself: a camera that its script moves, a scene between black
+	// bars, or anything while the player's input is switched off.
+	{
+		const Bool gameIsRunning = !freezeTime && TheGameLogic->isInGame() && !TheGameLogic->isInShellGame()
+			&& !TheGameLogic->isGamePaused() && TheGlobalData->m_loadScreenRender != TRUE;
+		const Bool isShowing = isLetterBoxed() || isLetterBoxFading() || primaryW3DView->isDoingScriptedCamera()
+			|| (TheInGameUI != nullptr && !TheInGameUI->getInputEnabled());
+		if (VitaPacing::leaveOutPicture(gameIsRunning && !isShowing))
+			return;
+	}
+#endif
+
 	Bool viewsUpdated = TRUE;
 
 	do {
@@ -2221,7 +2248,7 @@ AGAIN:
 	    if ( (TheGameLogic->getFrame() % 30 == 1) || ( ! (!TheGameLogic->isGamePaused() && TheGlobalData->m_TiVOFastMode && TheGameLogic->isInReplayGame())) )
     #endif
 		{
-			//USE_PERF_TIMER(BigAssRenderLoop)
+			USE_PERF_TIMER(BigAssRenderLoop)
 			static Bool couldRender = true;
 			if ((TheGlobalData->m_breakTheMovie == FALSE) && (TheGlobalData->m_disableRender == false) && WW3D::Begin_Render( true, true, Vector3( 0.0f, 0.0f, 0.0f ), TheWaterTransparency->m_minWaterOpacity ) == WW3D_ERROR_OK)
 			{
@@ -2240,10 +2267,16 @@ AGAIN:
 					Debug_Statistics::Record_DX8_Polys_And_Vertices(numRenderTargetPolygons,numRenderTargetVertices,ShaderClass::_PresetOpaqueShader);
 
 				// draw all views of the world
-				drawViews();
+				{
+					USE_PERF_TIMER(W3DDisplay_drawViews)
+					drawViews();
+				}
 
 				// draw the user interface
-				TheInGameUI->DRAW();
+				{
+					USE_PERF_TIMER(W3DDisplay_drawInGameUI)
+					TheInGameUI->DRAW();
+				}
 
 				// end of video example code
 
@@ -2322,7 +2355,10 @@ AGAIN:
 				}
 #endif
 				// render is all done!
-				WW3D::End_Render();
+				{
+					USE_PERF_TIMER(W3DDisplay_endRender)
+					WW3D::End_Render();
+				}
 			}
 			else
 			{
@@ -3186,6 +3222,14 @@ VideoBuffer*	W3DDisplay::createVideoBuffer()
 	if (TheGameLODManager && (!TheGameLODManager->didMemPass() || W3DShaderManager::getChipset() == DC_GEFORCE2))
 		format = VideoBuffer::TYPE_R5G6B5;
 
+#if defined(__vita__)
+	// GeneralsX @performance Claude 14/10/2026 On the PS Vita every video in 16 bit as well: a movie
+	// frame is a texture of 1024x1024 pixels, which the console's Direct3D layer takes as it is in this
+	// format, while 32 bit pixels get their unused byte set one by one, and half the bytes are moved.
+	if ( DX8Wrapper::Get_Current_Caps()->Support_Texture_Format( WW3D_FORMAT_R5G6B5 ))
+		format = VideoBuffer::TYPE_R5G6B5;
+#endif
+
 	W3DVideoBuffer *buffer = NEW W3DVideoBuffer( format );
 
 	return buffer;
@@ -3201,6 +3245,15 @@ void W3DDisplay::drawScaledVideoBuffer( VideoBuffer *buffer, VideoStreamInterfac
 	Real videoAspect = (Real)stream->width() / (Real)stream->height();
 	Real displayAspect = (Real)getWidth() / (Real)getHeight();
 	Bool wideAspect = displayAspect >= videoAspect;
+
+#if defined(__vita__)
+	// GeneralsX @tweak Claude 15/10/2026 On the PS Vita a movie fills the width of the screen, and what
+	// does not fit is cut off at the top and the bottom. The movies played over the whole screen, the
+	// intro and the EA logo, are 4:3 frames with black bars of their own around a wider picture. Fitted
+	// into the height of the console's wide screen they took three quarters of it, and the main menu
+	// behind them showed at the sides.
+	wideAspect = FALSE;
+#endif
 
 	Int startX = 0;
 	Int endX = 0;

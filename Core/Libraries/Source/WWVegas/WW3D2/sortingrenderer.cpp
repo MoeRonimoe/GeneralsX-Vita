@@ -381,6 +381,12 @@ static void Apply_Render_State(RenderStateStruct& render_state)
 		return;	//no point changing lights if they are ignored.
   //prevLight = render_state.lightsHash;
 
+	// GeneralsX @bugfix Claude 15/10/2026 These lights go to the device past the render state, so the
+	// device's lights are no longer those of the light environment set last, which
+	// DX8Wrapper::Set_Light_Environment() would keep when asked for it again: the first objects of the
+	// next frame took the lights of the last translucent one, and walls and fences flickered.
+	DX8Wrapper::EnvironmentLightCount = -1;
+
 	if (render_state.LightEnable[0]) {
 		DX8Wrapper::Set_DX8_Light(0,&render_state.Lights[0]);
 		if (render_state.LightEnable[1]) {

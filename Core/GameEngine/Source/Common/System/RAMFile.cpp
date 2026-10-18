@@ -56,6 +56,9 @@
 #include <unistd.h>
 #endif
 #include <sys/stat.h>
+#if defined(__vita__)
+#include <pthread.h>
+#endif
 
 #include "Common/AsciiString.h"
 #include "Common/FileSystem.h"
@@ -206,6 +209,110 @@ Bool RAMFile::open( File *file )
 //============================================================================
 // RAMFile::openFromArchive
 //============================================================================
+#if defined(__vita__)
+// GeneralsX @performance Claude 12/10/2026 The files read from the archives last, kept for a moment.
+// WW3D opens a texture three times in a row (for its size, for a small version, for the texture), and
+// an open reads the whole file from the archive. On the PS Vita's memory card that is 30 ms for a
+// usual texture and a third of a second for one of the menu's, each time; half of all the time spent
+// reading files went into reading what had just been read. Other systems keep what they read from a
+// disk themselves, which is why this is for this one only.
+namespace
+{
+
+struct RecentRead
+{
+	AsciiString archive;
+	Int offset;
+	Int size;
+	Char *data;
+	UnsignedInt used;	///< count of the last use, the lowest goes first
+};
+
+enum
+{
+	RECENT_READ_COUNT = 8,
+	RECENT_READ_MIN_BYTES = 16 * 1024,			///< less is one request to the card either way
+	RECENT_READ_MAX_BYTES = 5 * 1024 * 1024,
+	RECENT_READ_BUDGET = 8 * 1024 * 1024
+};
+
+RecentRead s_recentReads[RECENT_READ_COUNT];
+UnsignedInt s_recentReadUse = 0;
+size_t s_recentReadBytes = 0;
+pthread_mutex_t s_recentReadLock = PTHREAD_MUTEX_INITIALIZER;	///< files are opened by more than one thread
+
+//-----------------------------------------------------------------
+/// Copies a file that was read a moment ago. Returns FALSE if it was not.
+Bool copyRecentRead(const AsciiString &archive, Int offset, Int size, Char *destination)
+{
+	Bool found = FALSE;
+
+	pthread_mutex_lock(&s_recentReadLock);
+	for (Int i = 0; i < RECENT_READ_COUNT && !found; ++i)
+	{
+		RecentRead &read = s_recentReads[i];
+		if (read.data != nullptr && read.offset == offset && read.size == size && read.archive == archive)
+		{
+			memcpy(destination, read.data, size);
+			read.used = ++s_recentReadUse;
+			found = TRUE;
+		}
+	}
+	pthread_mutex_unlock(&s_recentReadLock);
+
+	return found;
+}
+
+//-----------------------------------------------------------------
+void keepRecentRead(const AsciiString &archive, Int offset, Int size, const Char *data)
+{
+	if (size < RECENT_READ_MIN_BYTES || size > RECENT_READ_MAX_BYTES)
+		return;
+
+	Char *copy = static_cast<Char *>(malloc(size));
+	if (copy == nullptr)
+		return;
+	memcpy(copy, data, size);
+
+	pthread_mutex_lock(&s_recentReadLock);
+
+	// Room for it: a free place, and the bytes.
+	for (;;)
+	{
+		Int oldest = -1;
+		Int unused = -1;
+		for (Int i = 0; i < RECENT_READ_COUNT; ++i)
+		{
+			if (s_recentReads[i].data == nullptr)
+				unused = i;
+			else if (oldest < 0 || s_recentReads[i].used < s_recentReads[oldest].used)
+				oldest = i;
+		}
+
+		if (oldest < 0 || (unused >= 0 && s_recentReadBytes + size <= RECENT_READ_BUDGET))
+		{
+			RecentRead &read = s_recentReads[unused >= 0 ? unused : 0];
+			read.archive = archive;
+			read.offset = offset;
+			read.size = size;
+			read.data = copy;
+			read.used = ++s_recentReadUse;
+			s_recentReadBytes += size;
+			break;
+		}
+
+		RecentRead &gone = s_recentReads[oldest];
+		s_recentReadBytes -= gone.size;
+		free(gone.data);
+		gone.data = nullptr;
+	}
+
+	pthread_mutex_unlock(&s_recentReadLock);
+}
+
+} // namespace
+#endif // __vita__
+
 Bool RAMFile::openFromArchive(File *archiveFile, const AsciiString& filename, Int offset, Int size)
 {
 	//USE_PERF_TIMER(RAMFile)
@@ -221,6 +328,13 @@ Bool RAMFile::openFromArchive(File *archiveFile, const AsciiString& filename, In
 	m_data = MSGNEW("RAMFILE") Char [size];	// pool[]ify
 	m_size = size;
 
+#if defined(__vita__)
+	if (copyRecentRead(archiveFile->getName(), offset, size, m_data)) {
+		m_nameStr = filename;
+		return TRUE;
+	}
+#endif
+
 	if (archiveFile->seek(offset, File::START) != offset) {
 		return FALSE;
 	}
@@ -228,6 +342,10 @@ Bool RAMFile::openFromArchive(File *archiveFile, const AsciiString& filename, In
 		return FALSE;
 	}
 	m_nameStr = filename;
+
+#if defined(__vita__)
+	keepRecentRead(archiveFile->getName(), offset, size, m_data);
+#endif
 
 	return TRUE;
 }

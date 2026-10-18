@@ -496,6 +496,12 @@ void GameClient::registerDrawable( Drawable *draw )
  */
 DECLARE_PERF_TIMER(GameClient_update)
 DECLARE_PERF_TIMER(GameClient_draw)
+// GeneralsX @tweak Claude 12/10/2026 The parts of the update besides drawing, for the frame profile.
+DECLARE_PERF_TIMER(GameClient_windows)
+DECLARE_PERF_TIMER(GameClient_drawables)
+DECLARE_PERF_TIMER(GameClient_terrainVisual)
+DECLARE_PERF_TIMER(GameClient_displayUpdate)
+DECLARE_PERF_TIMER(GameClient_particles)
 void GameClient::update()
 {
 	USE_PERF_TIMER(GameClient_update)
@@ -553,6 +559,10 @@ void GameClient::update()
 
 	if (m_intro != nullptr)
 	{
+		// GeneralsX @bugfix Claude 14/10/2026 The video player is serviced during the intro movies as
+		// well: the FFmpeg player starts the sound of a movie only in its update.
+		TheVideoPlayer->UPDATE();
+
 		// redraw all views, update the GUI
 		TheDisplay->UPDATE();
 		TheDisplay->DRAW();
@@ -561,6 +571,7 @@ void GameClient::update()
 
 	// update the window system itself
 	{
+		USE_PERF_TIMER(GameClient_windows)
 		TheWindowManager->UPDATE();
 	}
 
@@ -604,7 +615,15 @@ void GameClient::update()
 		}
 
 
+		// GeneralsX @performance Claude 13/10/2026 The shroud status is worked out for the drawables
+		// that are marked (Drawable::markShroudStatusStale), and for all of them when the player
+		// whose view this is has changed.
+		static Int shroudStatusPlayerIndex = -1;
+		const Bool shroudStatusPlayerChanged = shroudStatusPlayerIndex != localPlayerIndex;
+		shroudStatusPlayerIndex = localPlayerIndex;
+
 		// call the update for all client drawables
+		USE_PERF_TIMER(GameClient_drawables)
 		const Real timeScale = TheFramePacer->getActualLogicTimeScaleOverFpsRatio();
 		Drawable* draw = firstDrawable();
 		while (draw)
@@ -622,8 +641,11 @@ void GameClient::update()
 				//to getShroudStatus() because they are only made for visible on-screen
 				//objects.
 				Object *object=draw->getObject();
-				if (object)
+				if (object && (draw->isShroudStatusStale() || shroudStatusPlayerChanged))
 				{
+					// What marks the drawable again while this is worked out is kept.
+					draw->friend_clearShroudStatusStale();
+
 					if (TheGhostObjectManager->trackAllPlayers())
 					{
 						// TheSuperHackers @info Update the shrouded status for all objects
@@ -640,8 +662,14 @@ void GameClient::update()
 					}
 
 					ObjectShroudStatus ss=object->getShroudedStatus(localPlayerIndex);
+
+					// Before the partition manager has been updated for the first time the status
+					// is not worked out, and it stays to be asked for.
+					Bool stale = draw->isShroudStatusStale()
+						|| ss == OBJECTSHROUD_INVALID || ss == OBJECTSHROUD_INVALID_BUT_PREVIOUS_VALID;
 					if (ss >= OBJECTSHROUD_FOGGED && draw->getShroudClearFrame() != InvalidShroudClearFrame) {
 						UnsignedInt limit = 2*LOGICFRAMES_PER_SECOND;
+						const UnsignedInt longestLimit = limit + 3*LOGICFRAMES_PER_SECOND;
 						if (object->isEffectivelyDead()) {
 							// extend the time, so we can see the dead plane blow up & crash.
 							limit += 3*LOGICFRAMES_PER_SECOND;
@@ -650,8 +678,15 @@ void GameClient::update()
 							// It's been less than 2 seconds since we could see them clear, so keep showing them.
 							ss = OBJECTSHROUD_CLEAR;
 						}
+						// Until the longer of the two times is over, the answer depends on the frame and
+						// on whether the object has died meanwhile.
+						if (TheGameLogic->getFrame() < longestLimit + draw->getShroudClearFrame()) {
+							stale = TRUE;
+						}
 					}
 					draw->setFullyObscuredByShroud(ss >= OBJECTSHROUD_FOGGED);
+					if (!stale)
+						draw->friend_clearShroudStatusStale();
 				}
 			}
 			draw->updateDrawable(timeScale);
@@ -669,11 +704,13 @@ void GameClient::update()
 
 	// update the terrain visuals
 	{
+		USE_PERF_TIMER(GameClient_terrainVisual)
 		TheTerrainVisual->UPDATE();
 	}
 
 	// update display
 	{
+		USE_PERF_TIMER(GameClient_displayUpdate)
 		TheDisplay->UPDATE();
 	}
 
@@ -682,6 +719,7 @@ void GameClient::update()
 	// moves bone-attached particle systems to the current client bone transforms of their drawables.
 	if( !freezeTime && TheGameLogic->hasUpdated() )
 	{
+		USE_PERF_TIMER(GameClient_particles)
 		TheParticleSystemManager->setLocalPlayerIndex(localPlayerIndex);
 		TheParticleSystemManager->UPDATE();
 	}

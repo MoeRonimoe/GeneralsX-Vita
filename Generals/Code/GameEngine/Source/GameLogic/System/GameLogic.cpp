@@ -52,8 +52,13 @@
 #include <windows.h>
 #else
 #include <sys/utsname.h>
+#ifdef SAGE_USE_SDL3
 #include <SDL3/SDL.h>
 #endif
+#endif
+#endif
+#if defined(__vita__)
+#include <VitaDiagnostics.h>
 #endif
 #include "Common/GameUtility.h"
 #include "Common/INI.h"
@@ -3294,6 +3299,11 @@ void GameLogic::update()
 	USE_PERF_TIMER(GameLogic_update)
 	PROFILER_SECTION_COLOR(0x4CAF50);
 
+#if defined(__vita__)
+	// GeneralsX @feature Claude 11/10/2026 PS Vita: the log reports the share of the simulation in a frame.
+	const VitaDiagnostics::ScopedTime vitaLogicTime(VitaDiagnostics::TIME_GAME_LOGIC);
+#endif
+
 	// GeneralsX @bugfix fbraz3 16/07/2026 Lock FPU state before every simulation frame
 	ScopedFPUGuard fpuGuard;
 
@@ -5085,9 +5095,17 @@ void GameLogic::writeCRCBuffersToDisk(UnsignedInt frame) const
 #else
 	struct utsname sysInfo;
 	if (uname(&sysInfo) == 0) {
+#ifdef SAGE_USE_SDL3
+		const int cpuCores = SDL_GetNumLogicalCPUCores();
+		const int systemRamMB = SDL_GetSystemRAM();
+#else
+		// Platforms without SDL (PS Vita) do not report the hardware here.
+		const int cpuCores = 0;
+		const int systemRamMB = 0;
+#endif
 		headerStr.format("GeneralsX: %s %s (%s)\nArch: %s\nCPU Cores: %d\nRAM: %d MB\n\n",
 						 sysInfo.sysname, sysInfo.release, sysInfo.version, sysInfo.machine,
-						 SDL_GetNumLogicalCPUCores(), SDL_GetSystemRAM());
+						 cpuCores, systemRamMB);
 	} else {
 		headerStr = "GeneralsX: Unknown OS/Arch\n\n";
 	}

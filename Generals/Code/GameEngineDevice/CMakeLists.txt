@@ -183,6 +183,8 @@ if(WIN32)
 #       Source/Win32Device/GameClient/Win32DIMouse.cpp
         ${CMAKE_SOURCE_DIR}/Core/GameEngineDevice/Source/Win32Device/GameClient/Win32Mouse.cpp
     )
+elseif(VITA)
+    # PS Vita: the device sources come from the vita_device interface library (Platform/Vita).
 else()
     # Linux-specific files (SDL3, DXVK)
     list(APPEND GAMEENGINEDEVICE_SRC
@@ -233,6 +235,10 @@ target_link_libraries(g_gameenginedevice PUBLIC
 # GeneralsX @build BenderAI 11/02/2026
 if(SAGE_USE_SDL3)
     target_link_libraries(g_gameenginedevice PUBLIC sdl3lib)
+endif()
+
+if(VITA)
+    target_link_libraries(g_gameenginedevice PUBLIC vita_device)
 endif()
 
 # GeneralsX @feature BenderAI 10/03/2026 - OpenAL audio backend (ported from GeneralsMD/Zero Hour)

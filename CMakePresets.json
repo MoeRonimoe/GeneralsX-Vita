@@ -195,6 +195,37 @@
             }
         },
         {
+            "name": "vita",
+            "displayName": "PS Vita (VitaSDK, Direct3D 8 on vitaGL)",
+            "description": "Cross build for PS Vita. Requires the VITASDK environment variable.",
+            "generator": "Ninja",
+            "hidden": false,
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "toolchainFile": "$env{VITASDK}/share/vita.toolchain.cmake",
+            "cacheVariables": {
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "CMAKE_BUILD_TYPE": "Release",
+                "RTS_BUILD_ZEROHOUR": "OFF",
+                "RTS_BUILD_GENERALS": "ON",
+                "RTS_BUILD_CORE_TOOLS": "OFF",
+                "RTS_BUILD_GENERALS_TOOLS": "OFF",
+                "RTS_BUILD_ZEROHOUR_TOOLS": "OFF",
+                "RTS_BUILD_OPTION_SAGE_PATCH": "OFF",
+                "RTS_BUILD_OPTION_FFMPEG": "OFF",
+                "RTS_BUILD_OPTION_DEEP_CRC": "OFF",
+                "RTS_CRASHDUMP_ENABLE": "OFF",
+                "RTS_MEMORYPOOL_DEBUG": "OFF",
+                "SAGE_USE_DX8": "OFF",
+                "SAGE_USE_SDL3": "OFF",
+                "SAGE_USE_OPENAL": "OFF",
+                "SAGE_USE_MINIAUDIO": "OFF",
+                "SAGE_USE_GLM": "ON",
+                "SAGE_USE_NGMP": "OFF",
+                "SAGE_USE_DETERMINISTIC_MATH": "OFF",
+                "SAGE_UPDATE_CHECK": "OFF"
+            }
+        },
+        {
             "name": "linux64-deploy",
             "displayName": "Linux 64-bit DXVK/SDL3/MiniAudio Release",
             "inherits": "default-vcpkg",

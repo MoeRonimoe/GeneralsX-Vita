@@ -310,6 +310,18 @@ void PerfTimer::stopTimer()
 //-------------------------------------------------------------------------------------------------
 extern void StatMetricsDisplay( DebugDisplayInterface *dd, void *, FILE *fp );
 
+#elif defined(__vita__) && defined(VITA_FRAME_PROFILE)
+
+	// GeneralsX @feature Claude 11/10/2026 PS Vita: the timers feed the frame statistics in the log.
+	// There is no profiler for the console; with VITA_FRAME_PROFILE the log says every few
+	// seconds which of the timed parts of the engine an average frame was spent in.
+	#include <VitaDiagnostics.h>
+
+	#define DECLARE_PERF_TIMER(id)					static VitaDiagnostics::NamedTimer s_vitaTimer_##id(#id);
+	#define DECLARE_TOTAL_PERF_TIMER(id)		static VitaDiagnostics::NamedTimer s_vitaTimer_##id(#id);
+	#define USE_PERF_TIMER(id)							const VitaDiagnostics::NamedTimerScope vitaTimerScope_##id(s_vitaTimer_##id);
+	#define IGNORE_PERF_TIMER(id)
+
 #else		// PERF_TIMERS
 
 	#define DECLARE_PERF_TIMER(id)

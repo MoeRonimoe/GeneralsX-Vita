@@ -69,4 +69,10 @@ protected:
 	FILE * m_fileFP;																			///< pointer to file
 	XferBlockData *m_blockStack;													///< stack of block data
 
+#if defined(__vita__)
+	// GeneralsX @performance Claude 11/10/2026 PS Vita: the file is assembled in memory, see XferSave::open().
+	char *m_memoryImage;																	///< contents of the file while it is being written
+	size_t m_memoryImageSize;															///< size of the contents, maintained by the stream
+#endif
+
 };

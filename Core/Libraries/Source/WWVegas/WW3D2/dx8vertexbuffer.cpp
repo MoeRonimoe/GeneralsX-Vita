@@ -47,6 +47,10 @@
 #include "WWDebug/wwmemlog.h"
 #include <d3dx8core.h>
 
+#if defined(__vita__)
+#include <VitaD3D8Tags.h>
+#endif
+
 #define DEFAULT_VB_SIZE 5000
 
 static bool _DynamicSortingVertexArrayInUse=false;
@@ -788,6 +792,17 @@ void DynamicVBAccessClass::Allocate_DX8_Dynamic_Buffer()
 			_DynamicDX8VertexBufferSize,
 			(DX8VertexBufferClass::UsageType)usage));
 		_DynamicDX8VertexBufferOffset=0;
+
+#if defined(__vita__)
+		// GeneralsX @performance Claude 13/10/2026 This buffer is written through DynamicVBAccessClass
+		// alone, which discards it when it starts over and writes behind what it wrote otherwise.
+		// Saying so lets the PS Vita's Direct3D layer draw from the buffer where it used to copy
+		// the vertices of every draw call for the thread that draws: copying takes that console
+		// 5 ns per byte, 3 ms of a frame with many soldiers (VitaD3D8Tags.h).
+		const DWORD keepsRules=1;
+		_DynamicDX8VertexBuffer->Get_DX8_Vertex_Buffer()->SetPrivateData(
+			VITAD3D8_KEEPS_DYNAMIC_BUFFER_RULES,&keepsRules,sizeof(keepsRules),0);
+#endif
 	}
 
 	// Any room at the end of the buffer?

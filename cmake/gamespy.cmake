@@ -8,3 +8,9 @@ FetchContent_Declare(
 )
 
 FetchContent_MakeAvailable(gamespy)
+
+if(VITA)
+    # The SDK selects its backend per operating system and knows no generic POSIX target.
+    # Its Linux backend is plain BSD sockets and pthreads, which newlib provides on the Vita.
+    target_compile_definitions(gscommon PRIVATE __linux__ MAX_PATH=260)
+endif()

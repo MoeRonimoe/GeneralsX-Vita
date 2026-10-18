@@ -57,6 +57,105 @@ extern "C" {
 
 #include <chrono>
 
+// GeneralsX @bugfix Claude 15/10/2026 The sound of a movie plays at the speech volume turned down by a
+// fifth, as the game's Bink player does it (BinkVideoPlayer::calculateMovieAudioVolume). It played at
+// full volume: louder than everything else of the game, against the player's settings, and on the PS
+// Vita's small speakers the intro rattled.
+static Real movieVolume()
+{
+	return TheAudio->getVolume(AudioAffect_Speech) * 0.8f;
+}
+
+#if defined(__vita__)
+// GeneralsX @feature Claude 14/10/2026 What a movie costs on the PS Vita, for the log: the decoding in
+// frameNext() and the colour conversion into the video buffer in frameRender(), summed over the frames
+// of the stream that is open (there is one at a time), and the frames that were not shown.
+extern "C" {
+	#include <libavutil/pixdesc.h>
+}
+#include <string.h>
+#include <stdlib.h>
+#include <vector>
+#include <VitaYuv.h>
+
+struct MovieStatistics
+{
+	uint64_t decodeMicroseconds;
+	uint64_t renderMicroseconds;
+	uint64_t lastRenderMicroseconds;
+	Int framesDecoded;
+	Int framesRendered;
+	Int framesLeftOut;
+};
+static MovieStatistics s_movie;
+
+// With "+VITA_MOVIE_SOUND=1" in vita_args.txt the sound of a movie as it goes to the audio manager,
+// the first 20 seconds of it, is written to a WAV file when the movie closes: to compare it with
+// what FFmpeg decodes on a PC (the PC can play the file), and so to tell the decoder on the console
+// from what plays the sound.
+static const char *const MOVIE_SOUND_PATH = "ux0:data/Generals/UserData/movie_sound.wav";
+static std::vector<uint8_t> s_movieSound;
+static int s_movieSoundRate;
+static int s_movieSoundChannels;
+
+static void writeMovieSound()
+{
+	if (s_movieSound.empty())
+		return;
+
+	FILE *file = fopen(MOVIE_SOUND_PATH, "wb");
+	if (file != nullptr)
+	{
+		const uint32_t dataBytes = (uint32_t)s_movieSound.size();
+		const uint32_t riffBytes = 36 + dataBytes;
+		const uint32_t formatBytes = 16;
+		const uint16_t pcm = 1;
+		const uint16_t channels = (uint16_t)s_movieSoundChannels;
+		const uint32_t rate = (uint32_t)s_movieSoundRate;
+		const uint32_t byteRate = rate * channels * 2;
+		const uint16_t blockAlign = (uint16_t)(channels * 2);
+		const uint16_t bits = 16;
+		fwrite("RIFF", 1, 4, file);
+		fwrite(&riffBytes, 4, 1, file);
+		fwrite("WAVEfmt ", 1, 8, file);
+		fwrite(&formatBytes, 4, 1, file);
+		fwrite(&pcm, 2, 1, file);
+		fwrite(&channels, 2, 1, file);
+		fwrite(&rate, 4, 1, file);
+		fwrite(&byteRate, 4, 1, file);
+		fwrite(&blockAlign, 2, 1, file);
+		fwrite(&bits, 2, 1, file);
+		fwrite("data", 1, 4, file);
+		fwrite(&dataBytes, 4, 1, file);
+		fwrite(s_movieSound.data(), 1, s_movieSound.size(), file);
+		fclose(file);
+		fprintf(stderr, "[movie] sound written to %s: %u bytes, %d Hz, %d channels\n", MOVIE_SOUND_PATH, dataBytes, s_movieSoundRate, s_movieSoundChannels);
+		fflush(stderr);
+	}
+	s_movieSound.clear();
+	s_movieSound.shrink_to_fit();
+}
+
+// A frame that is a frame or more behind its time is not converted and shown when another one was
+// shown less than this long ago. On the console the conversion and the upload of the texture take
+// about as long as the decoding, and a movie keeps pace with its sound by showing fewer frames.
+static const uint64_t MOVIE_LONGEST_WITHOUT_FRAME_US = 100000;
+
+static uint64_t movieMicroseconds()
+{
+	return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+static void logMovieStatistics(const char *when)
+{
+	fprintf(stderr, "[movie] %s: %d frames decoded, %.1f ms each; %d shown, converted in %.1f ms each; %d left out because they were late\n",
+		when, s_movie.framesDecoded, s_movie.framesDecoded ? s_movie.decodeMicroseconds / 1000.0 / s_movie.framesDecoded : 0.0,
+		s_movie.framesRendered, s_movie.framesRendered ? s_movie.renderMicroseconds / 1000.0 / s_movie.framesRendered : 0.0,
+		s_movie.framesLeftOut);
+	fflush(stderr);
+}
+#endif
+
 //----------------------------------------------------------------------------
 //         Externals
 //----------------------------------------------------------------------------
@@ -212,13 +311,6 @@ VideoStreamInterface* FFmpegVideoPlayer::createStream( File* file )
 		stream->m_player = this;
 		m_firstStream = stream;
 
-		// never let volume go to 0, as Bink will interpret that as "play at full volume".
-		Int mod = (Int) ((TheAudio->getVolume(AudioAffect_Speech) * 0.8f) * 100) + 1;
-		[[maybe_unused]]  Int volume = (32768 * mod) / 100;
-		DEBUG_LOG(("FFmpegVideoPlayer::createStream() - About to set volume (%g -> %d -> %d",
-			TheAudio->getVolume(AudioAffect_Speech), mod, volume));
-		//BinkSetVolume( stream->m_handle,0, volume);
-		DEBUG_LOG(("FFmpegVideoPlayer::createStream() - set volume"));
 	}
 
 	return stream;
@@ -330,17 +422,23 @@ FFmpegVideoStream::FFmpegVideoStream(FFmpegFile* file)
 		m_good = m_ffmpegFile->decodePacket();
 
 #ifdef SAGE_USE_MINIAUDIO
-	audioStream->setVolume(1.0f);
+	audioStream->setVolume(movieVolume());
 	audioStream->play();
 #elif defined(SAGE_USE_OPENAL)
 	// Start audio playback
 	// GeneralsX @bugfix fbraz3 23/04/2026 Ensure video stream starts with audible gain even after prior source reuse.
 	// Issue: https://github.com/fbraz3/GeneralsX/issues/38
-	audioStream->setVolume(1.0f);
+	audioStream->setVolume(movieVolume());
 	audioStream->play();
 #endif
 
 	m_startTime = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+
+#if defined(__vita__)
+	memset(&s_movie, 0, sizeof(s_movie));
+	fprintf(stderr, "[movie] opened: %dx%d, %d frames, %s\n", width(), height(), frameCount(), m_good ? "first frame decoded" : "no frame decoded");
+	fflush(stderr);
+#endif
 }
 
 //============================================================================
@@ -371,6 +469,11 @@ FFmpegVideoStream::~FFmpegVideoStream()
 	av_frame_free(&m_frame);
 	sws_freeContext(m_swsContext);
 	delete m_ffmpegFile;
+
+#if defined(__vita__)
+	logMovieStatistics("closed");
+	writeMovieSound();
+#endif
 }
 
 void FFmpegVideoStream::onFrame(AVFrame *frame, int stream_idx, int stream_type, void *user_data)
@@ -457,6 +560,16 @@ void FFmpegVideoStream::onFrame(AVFrame *frame, int stream_idx, int stream_type,
 			}
 			frameData = videoStream->m_audioBuffer;
 		}
+
+#if defined(__vita__)
+		if (outputBitsPerSample == 16 && getenv("VITA_MOVIE_SOUND") != nullptr
+			&& s_movieSound.size() < (size_t)frame->sample_rate * frame->ch_layout.nb_channels * 2 * 20)
+		{
+			s_movieSoundRate = frame->sample_rate;
+			s_movieSoundChannels = frame->ch_layout.nb_channels;
+			s_movieSound.insert(s_movieSound.end(), frameData, frameData + outputFrameSize);
+		}
+#endif
 
 #ifdef SAGE_USE_MINIAUDIO
 		ma_format format = ma_format_unknown;
@@ -571,6 +684,30 @@ void FFmpegVideoStream::frameRender( VideoBuffer *buffer )
 		nullptr,
 		nullptr);
 
+#if defined(__vita__)
+	// "+VITA_MOVIE_PICTURE=0" in vita_args.txt: the frames are decoded but not converted and shown,
+	// to tell what the pictures cost the rest of the console from what the decoding does; "=2" does
+	// that every other ten seconds, to compare the two within one movie.
+	static const Int pictures = getenv("VITA_MOVIE_PICTURE") == nullptr ? 1 : atoi(getenv("VITA_MOVIE_PICTURE"));
+	if (pictures == 0 || (pictures == 2
+		&& ((std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count() - m_startTime) / 10000) % 2 == 1))
+	{
+		s_movie.framesLeftOut++;
+		return;
+	}
+
+	const uint64_t renderStart = movieMicroseconds();
+	{
+		const uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+		const Bool late = now - m_startTime >= m_ffmpegFile->getFrameTime() * (uint64_t)(frameIndex() + 1);
+		if (late && s_movie.framesRendered > 0 && renderStart - s_movie.lastRenderMicroseconds < MOVIE_LONGEST_WITHOUT_FRAME_US)
+		{
+			s_movie.framesLeftOut++;
+			return;
+		}
+	}
+#endif
+
 	uint8_t *buffer_data = static_cast<uint8_t *>(buffer->lock());
 	if (buffer_data == nullptr) {
 		DEBUG_LOG(("Failed to lock videobuffer"));
@@ -579,10 +716,48 @@ void FFmpegVideoStream::frameRender( VideoBuffer *buffer )
 
 	int dst_strides[] = { (int)buffer->pitch() };
 	uint8_t *dst_data[] = { buffer_data };
-	[[maybe_unused]] int result =
-		sws_scale(m_swsContext, m_frame->data, m_frame->linesize, 0, height(), dst_data, dst_strides);
+	[[maybe_unused]] int result;
+#if defined(__vita__)
+	// GeneralsX @performance Claude 14/10/2026 On the PS Vita the frames of the game's movies go into
+	// 16 bit textures, and libswscale has no ARM code for that: 25 ms for a frame of 800x600. VitaYuv
+	// does the same with NEON.
+	if (dst_pix_fmt == AV_PIX_FMT_RGB565 && m_frame->format == AV_PIX_FMT_YUV420P
+		&& buffer->width() == (UnsignedInt)width() && buffer->height() == (UnsignedInt)height())
+	{
+		VitaYuv::convertToRgb565(m_frame->data[0], m_frame->linesize[0], m_frame->data[1], m_frame->linesize[1],
+			m_frame->data[2], m_frame->linesize[2], width(), height(), reinterpret_cast<uint16_t *>(buffer_data), dst_strides[0]);
+		result = height();
+	}
+	else
+#endif
+	result = sws_scale(m_swsContext, m_frame->data, m_frame->linesize, 0, height(), dst_data, dst_strides);
 	DEBUG_ASSERTLOG(result >= 0, ("Failed to scale frame"));
 	buffer->unlock();
+
+#if defined(__vita__)
+	if (s_movie.framesRendered == 0)
+	{
+		// What the first frame was made of and what came out in the middle of the picture.
+		uint8_t *pixels = static_cast<uint8_t *>(buffer->lock());
+		UnsignedInt middle = 0;
+		if (pixels != nullptr)
+		{
+			const UnsignedInt bytesPerPixel = buffer->format() == VideoBuffer::TYPE_R5G6B5 || buffer->format() == VideoBuffer::TYPE_X1R5G5B5 ? 2
+				: buffer->format() == VideoBuffer::TYPE_R8G8B8 ? 3 : 4;
+			memcpy(&middle, pixels + (height() / 2) * buffer->pitch() + (width() / 2) * bytesPerPixel, bytesPerPixel);
+			buffer->unlock();
+		}
+		fprintf(stderr, "[movie] first frame: %s, %dx%d into a %ux%u buffer of type %d with %u bytes per row, conversion %s, middle pixel 0x%08x\n",
+			av_get_pix_fmt_name(static_cast<AVPixelFormat>(m_frame->format)), m_frame->width, m_frame->height,
+			buffer->width(), buffer->height(), (Int)buffer->format(), buffer->pitch(), result >= 0 ? "done" : "failed", middle);
+		fflush(stderr);
+	}
+	s_movie.lastRenderMicroseconds = movieMicroseconds();
+	s_movie.renderMicroseconds += s_movie.lastRenderMicroseconds - renderStart;
+	s_movie.framesRendered++;
+	if (s_movie.framesRendered % 100 == 0)
+		logMovieStatistics("playing");
+#endif
 }
 
 //============================================================================
@@ -592,9 +767,16 @@ void FFmpegVideoStream::frameRender( VideoBuffer *buffer )
 void FFmpegVideoStream::frameNext()
 {
 	m_gotFrame = false;
+#if defined(__vita__)
+	const uint64_t decodeStart = movieMicroseconds();
+#endif
 	// Decode until we have our next video frame
 	while (m_good && m_gotFrame == false)
 		m_good = m_ffmpegFile->decodePacket();
+#if defined(__vita__)
+	s_movie.decodeMicroseconds += movieMicroseconds() - decodeStart;
+	s_movie.framesDecoded++;
+#endif
 }
 
 //============================================================================

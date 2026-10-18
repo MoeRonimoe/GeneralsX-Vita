@@ -89,6 +89,10 @@
 #include "GameClient/Keyboard.h"
 #include "GameClient/Shell.h"
 #include "GameClient/GameText.h"
+
+#if defined(__vita__)
+#include <VitaPacing.h>
+#endif
 #include "GameClient/ParticleSys.h"
 #include "GameClient/Water.h"
 #include "GameClient/TerrainRoads.h"
@@ -824,13 +828,33 @@ Bool GameEngine::canUpdateRegularGameLogic(UnsignedInt logicTimeQueryFlags)
 		// TheSuperHackers @tweak xezon 06/08/2025
 		// The logic time step is now decoupled from the render update.
 		const Real targetFrameTime = 1.0f / logicTimeScaleFps;
-		m_logicTimeAccumulator += min(TheFramePacer->getUpdateTime(), targetFrameTime);
 
-		if (m_logicTimeAccumulator >= targetFrameTime)
+#if defined(__vita__)
+		// GeneralsX @feature Claude 13/10/2026 A frame counts for one step of the logic at most,
+		// however long it took, so a machine that draws 20 frames per second plays the game at
+		// two thirds of its speed. With catching up switched on (VitaPacing.h) the logic is owed
+		// all the time that passed, up to three steps, and the display leaves pictures out while
+		// it is behind. The order of the steps and what they work out stay what they are.
+		if (VitaPacing::isCatchUp())
+		{
+			m_logicTimeAccumulator = min(m_logicTimeAccumulator + TheFramePacer->getUpdateTime(), 3.0f * targetFrameTime);
+		}
+		else
+#endif
+		{
+			m_logicTimeAccumulator += min(TheFramePacer->getUpdateTime(), targetFrameTime);
+		}
+
+		const Bool takeStep = m_logicTimeAccumulator >= targetFrameTime;
+		if (takeStep)
 		{
 			m_logicTimeAccumulator -= targetFrameTime;
-			return true;
 		}
+
+#if defined(__vita__)
+		VitaPacing::setLogicDebt(m_logicTimeAccumulator, targetFrameTime);
+#endif
+		return takeStep;
 	}
 
 	return false;

@@ -68,10 +68,10 @@ void PrepareShadows()
 		TheW3DProjectedShadowManager->prepareShadows();
 }
 
-//DECLARE_PERF_TIMER(shadowsRender)
+DECLARE_PERF_TIMER(shadowsRender)
 void DoShadows(RenderInfoClass & rinfo, Bool stencilPass)
 {
-	//USE_PERF_TIMER(shadowsRender)
+	USE_PERF_TIMER(shadowsRender)
 	shadowCameraFrustum=&rinfo.Camera.Get_Frustum();
 	Int projectionCount=0;
 

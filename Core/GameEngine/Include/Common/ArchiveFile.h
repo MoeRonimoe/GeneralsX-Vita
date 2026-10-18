@@ -62,9 +62,12 @@ public:
 
 	void									addFile(const AsciiString& path, const ArchivedFileInfo *fileInfo); ///< add this file to our directory tree.
 
+	// GeneralsX @tweak Claude 12/10/2026 Public: the PS Vita's audio reads archived files by position from a
+	// thread of its own and has to know where in the archive they are.
+	const ArchivedFileInfo *		getArchivedFileInfo(const AsciiString& filename) const;	///< return the ArchivedFileInfo from the directory tree.
+
 protected:
 	void									getFileListInDirectory(const DetailedArchivedDirectoryInfo *dirInfo, const AsciiString& currentDirectory, const AsciiString& searchName, FilenameList &filenameList, Bool searchSubdirectories) const;
-	const ArchivedFileInfo *		getArchivedFileInfo(const AsciiString& filename) const;	///< return the ArchivedFileInfo from the directory tree.
 
 protected:
 	File *m_file; ///< file pointer to the archive file on disk.  Kept open so we don't have to continuously open and close the file all the time.

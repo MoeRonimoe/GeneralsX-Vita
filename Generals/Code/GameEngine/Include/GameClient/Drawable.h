@@ -387,6 +387,18 @@ public:
 	void setFullyObscuredByShroud(Bool fullyObscured);
 	Bool getFullyObscuredByShroud() {return m_drawableFullyObscuredByShroud;}
 
+	// GeneralsX @performance Claude 13/10/2026 Whether GameClient::update() has to work out again if
+	// the shroud hides this drawable. It used to ask for the shroud status of every object on every
+	// frame, which on a map of 1800 objects is 1800 walks from the object to its template and its
+	// partition data, nearly all of them to find that nothing changed. What can change the answer
+	// marks the drawable instead: the object's shroud status becoming invalid
+	// (PartitionData::invalidateShroudedStatusForPlayer), the object entering or leaving the
+	// partition system (Object::friend_setPartitionData), and anybody else setting the flag
+	// (setFullyObscuredByShroud). A new drawable starts out marked.
+	void markShroudStatusStale() { m_shroudStatusStale = TRUE; }
+	Bool isShroudStatusStale() const { return m_shroudStatusStale; }
+	void friend_clearShroudStatusStale() { m_shroudStatusStale = FALSE; }
+
 	Bool getDrawsInMirror() const { return BitIsSet(m_status, DRAWABLE_STATUS_DRAWS_IN_MIRROR) || isKindOf(KINDOF_CAN_CAST_REFLECTIONS); }
 
 	void colorFlash( const RGBColor *color, UnsignedInt decayFrames = DEF_DECAY_FRAMES, UnsignedInt attackFrames = 0, UnsignedInt sustainAtPeak = 0 );  ///< flash a drawable in the color specified for a short time
@@ -743,6 +755,7 @@ private:
 	Bool m_hiddenByStealth;			///< drawable is hidden due to stealth
 	Bool m_instanceIsIdentity;	///< If true, instance matrix can be skipped
 	Bool m_drawableFullyObscuredByShroud;	///<drawable is hidden by shroud/fog
+	Bool m_shroudStatusStale;							///<m_drawableFullyObscuredByShroud has to be worked out again, see markShroudStatusStale()
   Bool m_ambientSoundEnabled;
   Bool m_ambientSoundEnabledFromScript;
 

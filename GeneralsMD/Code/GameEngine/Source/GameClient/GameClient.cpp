@@ -600,6 +600,10 @@ void GameClient::update()
 
 	if (m_intro != nullptr)
 	{
+		// GeneralsX @bugfix Claude 14/10/2026 The video player is serviced during the intro movies as
+		// well: the FFmpeg player starts the sound of a movie only in its update.
+		TheVideoPlayer->UPDATE();
+
 		// redraw all views, update the GUI
 		TheDisplay->UPDATE();
 		TheDisplay->DRAW();

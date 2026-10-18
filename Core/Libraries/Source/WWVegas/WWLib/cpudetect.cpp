@@ -1105,6 +1105,9 @@ void CPUDetectClass::Init_Compact_Log()
    TIME_ZONE_INFORMATION time_zone;
    GetTimeZoneInformation(&time_zone);
    COMPACTLOG(("%d\t", time_zone.Bias));  // get diff between local time and UTC
+#elif defined(__vita__)
+   // newlib exposes no timezone offset variable
+   COMPACTLOG(("%d\t", 0));
 #elif defined(_UNIX)
    time_t t = time(nullptr);
    localtime(&t);

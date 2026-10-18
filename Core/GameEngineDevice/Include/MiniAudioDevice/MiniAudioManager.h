@@ -42,6 +42,9 @@ enum PlayingAudioType
 struct PlayingAudio
 {
 	ma_sound* m_sound;
+	// GeneralsX @feature Claude 12/10/2026 A sound that is set to start when m_sound ends, which is how the
+	// PS Vita plays the rounds of a loop without a gap. Owned by this entry and released with it.
+	ma_sound* m_nextSound;
 	ma_audio_buffer* m_audioBuffer;
 	PlayingAudioType m_type;
 	RefCountPtr<DynamicAudioEventRTS> m_audioEventRTS;
@@ -50,6 +53,7 @@ struct PlayingAudio
 
 	PlayingAudio() :
 		m_sound(NULL),
+		m_nextSound(NULL),
 		m_audioBuffer(NULL),
 		m_type(PAT_INVALID),
 		m_audioEventRTS(NULL),
@@ -174,11 +178,15 @@ protected:
 	void processRequest(AudioRequest *req);
 
 	void playAudioEvent(AudioRequest *req);
+	// GeneralsX @refactor Claude 12/10/2026 The step of playAudioEvent() that depends on how files are decoded.
+	virtual ma_sound *createSound(const AsciiString &fileToPlay, ma_uint32 flags, ma_sound_group *groupToUse, PlayingAudio *audio);
 	void stopAudioEvent(AudioHandle handle);
 	void pauseAudioEvent(AudioHandle handle);
 
 	PlayingAudio *allocatePlayingAudio(void);
-	void releaseMiniAudioHandles(PlayingAudio *release);
+	// GeneralsX @refactor Claude 12/10/2026 Virtual: every way of letting go of a sound comes through here, and a
+	// platform may have more to let go of than this class knows (the PS Vita must not do it on the game's thread).
+	virtual void releaseMiniAudioHandles(PlayingAudio *release);
 	void releasePlayingAudio(PlayingAudio *release);
 
 	void stopAllAudioImmediately(void);
@@ -223,6 +231,8 @@ protected:
 	std::list<PlayingAudio *> m_stoppedAudio;
 
 	void *m_binkHandle;
+
+	Bool m_deviceOpen; ///< openDevice() got as far as creating the engine; closeDevice() has something to close
 
 #if defined(_DEBUG) || defined(_INTERNAL)
 	typedef std::set<AsciiString> SetAsciiString;

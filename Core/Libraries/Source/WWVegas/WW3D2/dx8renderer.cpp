@@ -60,6 +60,11 @@
 #include "camera.h"
 #include "stripoptimizer.h"
 #include "meshgeometry.h"
+#include "frameprofile.h"
+
+#if defined(__vita__)
+#include <VitaHelper.h>
+#endif
 
 /*
 ** Global Instance of the DX8MeshRender
@@ -70,6 +75,32 @@ bool DX8TextureCategoryClass::m_gForceMultiply = false; // Forces opaque materia
 
 static DynamicVectorClass<Vector3>				_TempVertexBuffer;
 static DynamicVectorClass<Vector3>				_TempNormalBuffer;
+
+#if defined(__vita__)
+// GeneralsX @performance Claude 13/10/2026 A skin that is to be transformed into the vertex buffer,
+// see DX8SkinFVFCategoryContainer::Render().
+struct SkinTaskStruct
+{
+	MeshClass *					Mesh;
+	VertexFormatXYZNDUV2 *	Verts;
+	const Vector2 *			UV0;
+	const Vector2 *			UV1;
+	const unsigned *			Diffuse;
+};
+
+static SimpleDynVecClass<SkinTaskStruct>		_SkinTasks;
+
+static void Run_Skin_Task(void * context, unsigned int index)
+{
+	const SkinTaskStruct & task = static_cast<const SkinTaskStruct *>(context)[index];
+	task.Mesh->Compose_Deformed_Vertex_Buffer(task.Verts,task.UV0,task.UV1,task.Diffuse);
+}
+
+// Sharing skins with the helper thread means waking it, which takes the time of a few skins.
+// Measured in the game: a set of 60 skins took 40 us per skin shared and 57 us not, a set of
+// 8 took 59 us shared and 51 us not, and the frames of the small sets were 0.8 ms longer.
+static const int MIN_SKINS_TO_SHARE = 24;
+#endif
 
 static MultiListClass<MeshModelClass>			_RegisteredMeshList;
 static TextureCategoryList							texture_category_delete_list;
@@ -1324,7 +1355,8 @@ void DX8SkinFVFCategoryContainer::Render()
 	MeshClass * remainingMesh = VisibleSkinHead;
 	while (renderedVertexCount < VisibleVertexCount)
 	{	mesh = remainingMesh;
-		{	DynamicVBAccessClass::WriteLockClass l(&vb);
+		{	WW3D_PROFILE_SCOPE(Mesh_skinVertices);
+			DynamicVBAccessClass::WriteLockClass l(&vb);
 			VertexFormatXYZNDUV2 * dest_verts = l.Get_Formatted_Vertex_Array();
 			unsigned vertex_offset=0;
 			remainingMesh = nullptr;
@@ -1350,16 +1382,33 @@ void DX8SkinFVFCategoryContainer::Render()
 		WWASSERT((vertex_offset+mesh_vertex_count)<=VisibleVertexCount);
 			DX8_RECORD_SKIN_RENDER(mesh->Get_Num_Polys(),mesh_vertex_count);
 
-				if (_TempVertexBuffer.Length() < mesh_vertex_count) _TempVertexBuffer.Resize(mesh_vertex_count);
-				if (_TempNormalBuffer.Length() < mesh_vertex_count) _TempNormalBuffer.Resize(mesh_vertex_count);
-
-				Vector3* loc=&(_TempVertexBuffer[0]);
-				Vector3* norm=&(_TempNormalBuffer[0]);
 				const Vector2* uv0=mmc->Get_UV_Array_By_Index(0);
 				const Vector2* uv1=mmc->Get_UV_Array_By_Index(1);
 				const unsigned* diffuse=mmc->Get_Color_Array(0,false);
 
 				VertexFormatXYZNDUV2* verts=dest_verts+vertex_offset;
+
+#if defined(__vita__)
+				// GeneralsX @performance Claude 13/10/2026 On the PS Vita the skin is transformed
+				// straight into the vertex buffer, with NEON (MeshModelClass::compose_deformed_vertex_buffer),
+				// instead of into two arrays that are then copied here. That is done below for
+				// all the skins together, by two threads; here the skin is noted. The normals are
+				// asked for because whoever asks first works them out, which may not happen twice
+				// at the same time for two skins of the same model.
+				mmc->Get_Vertex_Normal_Array();
+				SkinTaskStruct task;
+				task.Mesh=mesh;
+				task.Verts=verts;
+				task.UV0=uv0;
+				task.UV1=uv1;
+				task.Diffuse=diffuse;
+				_SkinTasks.Add(task,256);
+#else
+				if (_TempVertexBuffer.Length() < mesh_vertex_count) _TempVertexBuffer.Resize(mesh_vertex_count);
+				if (_TempNormalBuffer.Length() < mesh_vertex_count) _TempNormalBuffer.Resize(mesh_vertex_count);
+
+				Vector3* loc=&(_TempVertexBuffer[0]);
+				Vector3* norm=&(_TempNormalBuffer[0]);
 
 				mesh->Get_Deformed_Vertices(loc,norm);
 
@@ -1400,6 +1449,7 @@ void DX8SkinFVFCategoryContainer::Render()
 					loc++;
 					norm++;
 				}
+#endif
 
 				mesh->Set_Base_Vertex_Offset(vertex_offset);
 				vertex_offset+=mesh_vertex_count;
@@ -1407,6 +1457,21 @@ void DX8SkinFVFCategoryContainer::Render()
 
 				mesh = mesh->Peek_Next_Visible_Skin();
 			}
+
+#if defined(__vita__)
+			// GeneralsX @performance Claude 13/10/2026 The console has a core that did nothing, and
+			// a scene with many soldiers spends 3 ms of the frame here. Each skin reads its model
+			// and the bones of its container, which are worked out by now, and writes its own part
+			// of the vertex buffer, so it does not matter who transforms which.
+			if (_SkinTasks.Count() >= MIN_SKINS_TO_SHARE) {
+				VitaHelper::forEach(_SkinTasks.Count(),Run_Skin_Task,&_SkinTasks[0]);
+			} else {
+				for (int skin=0;skin<_SkinTasks.Count();++skin) {
+					Run_Skin_Task(&_SkinTasks[0],skin);
+				}
+			}
+			_SkinTasks.Delete_All(false);
+#endif
 		}
 
 		SNAPSHOT_SAY(("Set vb: %x ib: %x",&vb.FVF_Info(),index_buffer));
@@ -2012,6 +2077,9 @@ void DX8MeshRendererClass::Shutdown()
 	Clear_Pending_Delete_Lists();
 	_TempVertexBuffer.Clear();	//free memory
 	_TempNormalBuffer.Clear();
+#if defined(__vita__)
+	_SkinTasks.Resize(0);
+#endif
 }
 
 // ----------------------------------------------------------------------------
@@ -2199,11 +2267,17 @@ void DX8MeshRendererClass::Flush()
 	** bulk of the meshes have already been drawn (there would be extra overhead involved
 	** in solving this for skins)
 	*/
-	for (i=0;i<texture_category_container_lists_rigid.Count();++i) {
-		Render_FVF_Category_Container_List(*texture_category_container_lists_rigid[i]);
+	{
+		WW3D_PROFILE_SCOPE(Mesh_rigid);
+		for (i=0;i<texture_category_container_lists_rigid.Count();++i) {
+			Render_FVF_Category_Container_List(*texture_category_container_lists_rigid[i]);
+		}
 	}
 
-	Render_FVF_Category_Container_List(*texture_category_container_list_skin);
+	{
+		WW3D_PROFILE_SCOPE(Mesh_skin);
+		Render_FVF_Category_Container_List(*texture_category_container_list_skin);
+	}
 
 	Render_Decal_Meshes();
 

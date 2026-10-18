@@ -121,4 +121,5 @@ protected:
 	virtual Int	getNumExtraBlendTiles(Bool visible) override { return visible?m_numVisibleExtraBlendTiles:m_numExtraBlendTiles;}
 	void freeIndexVertexBuffers();
 	void renderExtraBlendTiles();	///< render 3-way blend tiles that have blend of 3 textures.
+	void findVisibleArea(CameraClass *camera, Int &newOrgX, Int &newOrgY); ///< GeneralsX @bugfix Claude 15/10/2026 Where to draw the terrain of the scripted camera.
 };

@@ -123,6 +123,7 @@ public:
 	Real			m_scale;				///< Scale.
 	Real			m_widthInTexture; ///< Width of the road in the texture.
 	Int				m_uniqueID;			///< Road type.
+	Bool			m_visible;			///< True if the segment is inside the drawn part of the terrain.
 protected:
 	Int										m_numVertex;
 	VertexFormatXYZDUV1*	m_vb;
@@ -216,7 +217,6 @@ protected:
 	Bool		m_initialized;		///< True if the subsystem initialized.
 	WorldHeightMap *m_map;		///< Pointer to the height map data.
 	RefRenderObjListIterator *m_lightsIterator;	///< Lighting iterator.
-	Int m_minX, m_maxX, m_minY, m_maxY; ///< Bounds on the terrain to be rendered.
 	Int m_curUniqueID;				///< Road type we are rendering at this pass.
 	Int m_curRoadType;
 #ifdef LOAD_TEST_ASSETS
@@ -231,7 +231,8 @@ protected:
 	Int			m_curNumRoadVertices; ///<Number of vertices used in current road type.
 	Int			m_curNumRoadIndices;	///<Number of indices used in current road type;
 
-	Bool m_updateBuffers; ///< If true, update the vertex buffers.
+	Bool m_updateBuffers; ///< If true, the view moved: update the vertex buffers if that changed what is visible.
+	Bool m_reloadBuffers; ///< If true, the roads themselves changed: update the vertex buffers in any case.
 
 	void addMapObjects();
 	void addMapObject(RoadSegment *pRoad, Bool updateTheCounts);
@@ -273,6 +274,7 @@ protected:
 	void loadRoadsInVertexAndIndexBuffers(); ///< Fills the index and vertex buffers for drawing.
 	void loadLitRoadsInVertexAndIndexBuffers(RefRenderObjListIterator *pDynamicLightsIterator); ///< Fills the index and vertex buffers for drawing.
 	void loadRoadSegment(UnsignedShort *ib, VertexFormatXYZDUV1 *vb, RoadSegment *pRoad); ///< Fills the index and vertex buffers for drawing 1 segment.
+	Bool visibilityChanged(const IRegion2D &bounds);								///< Returns true if some roads are now visible that weren't, or vice versa.
 	void allocateRoadBuffers();							 ///< Allocates the buffers.
 	void freeRoadBuffers();									 ///< Frees the index and vertex buffers.
 

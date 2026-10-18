@@ -107,13 +107,30 @@
 
 #endif // _MSC_VER
 
+#elif defined(__vita__)
+// newlib has no <endian.h>. The PS Vita runs little endian.
+#define htobe16(x) __builtin_bswap16(x)
+#define htole16(x) (x)
+#define be16toh(x) __builtin_bswap16(x)
+#define le16toh(x) (x)
+
+#define htobe32(x) __builtin_bswap32(x)
+#define htole32(x) (x)
+#define be32toh(x) __builtin_bswap32(x)
+#define le32toh(x) (x)
+
+#define htobe64(x) __builtin_bswap64(x)
+#define htole64(x) (x)
+#define be64toh(x) __builtin_bswap64(x)
+#define le64toh(x) (x)
+
 #else
 #error platform not supported
 #endif
 
 
 // Endian helper function data types
-#if defined(__linux__) || defined(__CYGWIN__)
+#if defined(__linux__) || defined(__CYGWIN__) || defined(__vita__)
 typedef uint16_t SwapType16;
 typedef uint32_t SwapType32;
 typedef uint64_t SwapType64;

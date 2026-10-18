@@ -58,6 +58,13 @@
 
 #include "Common/LocalFile.h"
 #include "Common/RAMFile.h"
+
+#if defined(__vita__)
+#include <unistd.h>
+
+// Reads of this many bytes or more do not go through the stream's buffer, see LocalFile::read().
+enum { LARGE_READ_BYTES = 4096 };
+#endif
 #include "Common/UnicodeString.h"
 #include "Common/PerfTimer.h"
 
@@ -354,6 +361,35 @@ Int LocalFile::read( void *buffer, Int bytes )
 	}
 
 #if USE_BUFFERED_IO
+#if defined(__vita__)
+	// GeneralsX @performance Claude 12/10/2026 newlib's fread() fills the stream's buffer once for every
+	// piece of a large read. With the buffer of one kilobyte that files are opened with, a megabyte is a
+	// thousand requests to the system, and on the PS Vita's memory card a request takes a third of a
+	// millisecond however little it asks for. Every file in an archive is read whole through here: a
+	// texture of a megabyte took 300 ms. A large read now goes around the buffer in one request, at the
+	// place the stream is at, and the stream is then put behind what was read.
+	// "+VITA_BUFFERED_READS=1" in vita_args.txt reads the old way, to compare.
+	static const bool readLargeDirectly = getenv("VITA_BUFFERED_READS") == nullptr;
+	if (readLargeDirectly && bytes >= LARGE_READ_BYTES && (m_access & WRITE) == 0)
+	{
+		const long position = ftell(m_file);
+		if (position >= 0)
+		{
+			const int descriptor = fileno(m_file);
+			Int total = 0;
+			while (total < bytes)
+			{
+				const ssize_t got = pread(descriptor, static_cast<char *>(buffer) + total, bytes - total, position + total);
+				if (got <= 0)
+					break;
+				total += static_cast<Int>(got);
+			}
+
+			fseek(m_file, position + total, SEEK_SET);
+			return total;
+		}
+	}
+#endif
 	Int ret = fread(buffer, 1, bytes, m_file);
 #else
 	Int ret = _read( m_handle, buffer, bytes );

@@ -58,7 +58,8 @@ MiniAudioStream::MiniAudioStream() :
     m_initialized(false),
     m_playing(false),
     m_soundCreated(false),
-    m_readCursor(0)
+    m_readCursor(0),
+    m_volume(1.0f)
 {
     ma_data_source_config baseConfig = ma_data_source_config_init();
     baseConfig.vtable = &g_MiniAudioStream_vtable;
@@ -166,7 +167,8 @@ void MiniAudioStream::createSound()
         return;
     }
 
-    ma_sound_set_volume(m_sound, 1.0f);
+    // GeneralsX @bugfix Claude 15/10/2026 The volume given before the sound existed, not always the full one.
+    ma_sound_set_volume(m_sound, m_volume);
     ma_sound_start(m_sound);
     m_soundCreated = true;
 }
@@ -191,6 +193,7 @@ void MiniAudioStream::setVolume(float vol)
 {
     // GeneralsX @bugfix meerzulee 19/07/2026 FP env guard for audio entry point (see #215)
     ScopedFPUGuard fpuGuard;
+    m_volume = vol;
     if (m_sound) ma_sound_set_volume(m_sound, vol);
 }
 

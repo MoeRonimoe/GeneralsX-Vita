@@ -117,6 +117,13 @@ Bool LookAtTranslator::canScrollAtScreenEdge() const
 	if (!TheMouse->isCursorCaptured())
 		return false;
 
+#if defined(__vita__)
+	// GeneralsX @tweak Claude 14/10/2026 On the PS Vita the pointer is moved by the stick or the touch
+	// screen and often rests at an edge, while the right stick scrolls the map. The preference is not
+	// asked: the options menu writes its default (on) into Options.ini, and it has no switch for it.
+	return false;
+#else
+
 #ifdef _WIN32
 	if (TheDisplay->getWindowed())
 	{
@@ -131,6 +138,7 @@ Bool LookAtTranslator::canScrollAtScreenEdge() const
 #endif
 
 	return true;
+#endif
 }
 
 //-----------------------------------------------------------------------------

@@ -58,6 +58,10 @@ XferSave::XferSave()
 	m_xferMode = XFER_SAVE;
 	m_fileFP = nullptr;
 	m_blockStack = nullptr;
+#if defined(__vita__)
+	m_memoryImage = nullptr;
+	m_memoryImageSize = 0;
+#endif
 
 }
 
@@ -119,6 +123,26 @@ void XferSave::open( AsciiString identifier )
 	// call base class
 	Xfer::open( identifier );
 
+#if defined(__vita__)
+	// GeneralsX @performance Claude 11/10/2026 PS Vita: assemble the file in memory and write it in one piece.
+	// Every block ends with a seek back to its size field and a seek forward again, and a
+	// saved game has tens of thousands of blocks. Each seek makes stdio flush and reposition
+	// the file, which on the memory card took minutes for a file of 4 MB.
+	// The file is created right away so that a path that cannot be written still fails here.
+	FILE *file = fopen( identifier.str(), "wb" );
+	if( file == nullptr )
+	{
+
+		DEBUG_CRASH(( "File '%s' not found", identifier.str() ));
+		throw XFER_FILE_NOT_FOUND;
+
+	}
+	fclose( file );
+
+	m_fileFP = open_memstream( &m_memoryImage, &m_memoryImageSize );
+	if( m_fileFP == nullptr )
+		throw XFER_FILE_NOT_FOUND;
+#else
 	// open the file
 	m_fileFP = fopen( identifier.str(), "w+b" );
 	if( m_fileFP == nullptr )
@@ -128,6 +152,7 @@ void XferSave::open( AsciiString identifier )
 		throw XFER_FILE_NOT_FOUND;
 
 	}
+#endif
 
 }
 
@@ -146,9 +171,45 @@ void XferSave::close()
 
 	}
 
+#if defined(__vita__)
+	// The stream reports the position of its last write as the size, so leave it at the end.
+	fseek( m_fileFP, 0, SEEK_END );
+	const long imageSize = ftell( m_fileFP );
+	fclose( m_fileFP );
+	m_fileFP = nullptr;
+
+	// Like the fclose() of a file on disk, this cannot report a failure to the caller.
+	Bool written = FALSE;
+	if( m_memoryImage != nullptr && imageSize >= 0 )
+	{
+
+		FILE *file = fopen( m_identifier.str(), "wb" );
+		if( file != nullptr )
+		{
+
+			written = fwrite( m_memoryImage, 1, imageSize, file ) == (size_t)imageSize;
+			if( fclose( file ) != 0 )
+				written = FALSE;
+
+		}
+
+	}
+	if( written == FALSE )
+	{
+
+		fprintf( stderr, "XferSave::close - unable to write %ld bytes to '%s'\n", imageSize, m_identifier.str() );
+		fflush( stderr );
+
+	}
+
+	free( m_memoryImage );
+	m_memoryImage = nullptr;
+	m_memoryImageSize = 0;
+#else
 	// close the file
 	fclose( m_fileFP );
 	m_fileFP = nullptr;
+#endif
 
 	// erase the filename
 	m_identifier.clear();

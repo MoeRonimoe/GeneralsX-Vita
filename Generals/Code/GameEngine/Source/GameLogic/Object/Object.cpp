@@ -1655,10 +1655,10 @@ void Object::reactToTurretChange( WhichTurretType turret, Real oldRotation, Real
 }
 
 //-------------------------------------------------------------------------------------------------
-//DECLARE_PERF_TIMER(Object_reactToTransformChange)
+DECLARE_PERF_TIMER(Object_reactToTransformChange)
 void Object::reactToTransformChange(const Matrix3D* oldMtx, const Coord3D* oldPos, Real oldAngle)
 {
-	//USE_PERF_TIMER(Object_reactToTransformChange)
+	USE_PERF_TIMER(Object_reactToTransformChange)
 	if(_isnan(getPosition()->x) || _isnan(getPosition()->y) || _isnan(getPosition()->z)) {
 		DEBUG_CRASH(("Object pos is nan."));
 		TheGameLogic->destroyObject(this);
@@ -1691,6 +1691,17 @@ void Object::reactToTransformChange(const Matrix3D* oldMtx, const Coord3D* oldPo
 		else
 			m_privateStatus |= OFF_MAP;
 	}
+}
+
+//-------------------------------------------------------------------------------------------------
+void Object::friend_setPartitionData(PartitionData *pd)
+{
+	m_partitionData = pd;
+
+	// GeneralsX @performance Claude 13/10/2026 An object outside the partition system (a soldier in a
+	// building) counts as clear of the shroud, see getShroudedStatus(), so this changes the answer.
+	if (m_drawable != nullptr)
+		m_drawable->markShroudStatusStale();
 }
 
 //-------------------------------------------------------------------------------------------------
