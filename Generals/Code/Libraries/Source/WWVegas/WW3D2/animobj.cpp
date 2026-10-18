@@ -63,6 +63,7 @@
 #include "assetmgr.h"
 #include "hanim.h"
 #include "hcanim.h"
+#include "hrawanim.h"
 #include "ww3d.h"
 #include "WWDebug/wwmemlog.h"
 #include "animatedsoundmgr.h"
@@ -83,7 +84,9 @@
  *=============================================================================================*/
 Animatable3DObjClass::Animatable3DObjClass(const char * htree_name) :
 	IsTreeValid(0),
-	CurMotionMode(BASE_POSE)
+	CurMotionMode(BASE_POSE),
+	ShownRawMotion(nullptr),
+	ShownRawFrame(0.0f)
 {
 	// Inline struct members can't be initialized in init list for some reason...
   ModeAnim.Motion=nullptr;
@@ -139,7 +142,9 @@ Animatable3DObjClass::Animatable3DObjClass(const Animatable3DObjClass & src) :
 	CompositeRenderObjClass(src),
 	IsTreeValid(0),
 	CurMotionMode(BASE_POSE),
-	HTree(nullptr)
+	HTree(nullptr),
+	ShownRawMotion(nullptr),
+	ShownRawFrame(0.0f)
 {
    // Inline struct members can't be initialized in init list for some reason...
 	ModeAnim.Motion=nullptr;
@@ -238,6 +243,10 @@ Animatable3DObjClass & Animatable3DObjClass::operator = (const Animatable3DObjCl
 void Animatable3DObjClass::Release()
 {
 	switch (CurMotionMode) {
+	// GeneralsX @bugfix Claude 16/10/2026 An animation that is set next is worked out from its own frame,
+	// see Raw_Anim_Update().
+	ShownRawMotion = nullptr;
+
 
 		case BASE_POSE:
 			break;
@@ -1051,6 +1060,22 @@ void Animatable3DObjClass::Single_Anim_Progress ()
 	// Update the frame number and sync time
 	//
 	ModeAnim.PrevFrame		= ModeAnim.Frame;
+void Animatable3DObjClass::Raw_Anim_Update(const Matrix3D & root,HRawAnimClass * motion,float frame)
+{
+	// TheSuperHackers @tweak Keep the animation frame step in sync with the ww3d frame step if they can align.
+	// @todo This needs improving if the WWSyncPerSecond is changed or the animation frame rates can be larger.
+	// GeneralsX @bugfix Claude 16/10/2026 A frame without sync time shows the frame the hierarchy was last
+	// worked out for, but works the hierarchy out: HTreeClass::Anim_Update_Without_Interpolation() skipped
+	// that, also for an animation that had just been set, which stayed unposed.
+	static_assert(WWSyncPerSecond == 30, "This is currently catered to a 30 fps sync");
+	if (motion == ShownRawMotion && WW3D::Get_Sync_Frame_Time() == 0 && (int)motion->Get_Frame_Rate() == WWSyncPerSecond)
+		frame = ShownRawFrame;
+
+	HTree->Anim_Update_Without_Interpolation(root,motion,frame);
+	ShownRawMotion = motion;
+	ShownRawFrame = frame;
+}
+
 	ModeAnim.Frame				= Compute_Current_Frame(&ModeAnim.animDirection);
 	ModeAnim.LastSyncTime	= WW3D::Get_Logic_Time_Milliseconds();
 }

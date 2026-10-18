@@ -155,6 +155,9 @@ protected:
 	// Progress animations for single anim (loop and once)
 	void								Single_Anim_Progress();
 
+	// GeneralsX @bugfix Claude 16/10/2026 Anim_Update() for a raw animation, see animobj.cpp.
+	void								Raw_Anim_Update(const Matrix3D & root,HRawAnimClass * motion,float frame);
+
 	// Release any animations
 	void								Release();
 
@@ -177,6 +180,11 @@ protected:
 	};
 
 	int								CurMotionMode;
+
+	// GeneralsX @bugfix Claude 16/10/2026 The raw animation and its frame the hierarchy was last worked
+	// out for, see Raw_Anim_Update(); null while that is not the animation that is set.
+	HAnimClass *					ShownRawMotion;
+	float								ShownRawFrame;
 
 	union {
 		// CurMotionMode == SINGLE_ANIM
@@ -259,7 +267,7 @@ inline void Animatable3DObjClass::Anim_Update(const Matrix3D & root,HAnimClass *
 	if ((motion) && (HTree)) {
 #if !WW3D_ENABLE_RAW_ANIM_INTERPOLATION
 		if (motion->Class_ID() == HAnimClass::CLASSID_HRAWANIM)
-			HTree->Anim_Update_Without_Interpolation(root,(HRawAnimClass*)motion,frame);
+			Raw_Anim_Update(root,(HRawAnimClass*)motion,frame);
 		else
 #endif
 			HTree->Anim_Update(root,motion,frame);

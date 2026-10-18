@@ -608,14 +608,11 @@ void HTreeClass::Anim_Update(const Matrix3D & root,HAnimClass * motion,float fra
 For use by 'Generals' -MW*/
 void HTreeClass::Anim_Update_Without_Interpolation(const Matrix3D & root,HRawAnimClass * motion,float frame)
 {
-	if (WW3D::Get_Sync_Frame_Time() == 0 && (int)motion->Get_Frame_Rate() == WWSyncPerSecond)
-	{
-		// TheSuperHackers @tweak Keep the animation frame step in sync with the ww3d frame step if they can align.
-		// @todo This needs improving if the WWSyncPerSecond is changed or the animation frame rates can be larger.
-		static_assert(WWSyncPerSecond == 30, "This is currently catered to a 30 fps sync");
-		return;
-	}
-
+	// GeneralsX @bugfix Claude 16/10/2026 This returned without working out anything on a frame without
+	// sync time, to keep the animation frame step in sync with the ww3d frame step. That left a hierarchy
+	// whose animation had just been set in the pose it had before, the base pose for a new model: the logic
+	// took the launch bones of the Scud Storm from a model that had not been posed, and its missiles flew
+	// off level instead of upwards. Animatable3DObjClass::Raw_Anim_Update() now holds the frame instead.
 	PivotClass *pivot,*endpivot,*lastAnimPivot;
 
 	Pivot[0].Transform = root;
