@@ -28,6 +28,7 @@
 #include "Common/GameAudio.h"
 #include "Common/GlobalData.h"
 #include "Common/Radar.h"
+#include "GameClient/Drawable.h"
 #include "GameClient/ParticleSys.h"
 #include "StdDevice/Common/StdBIGFileSystem.h"
 #include "StdDevice/Common/StdLocalFileSystem.h"
@@ -131,8 +132,11 @@ static double averageWithoutSlowest(uint32_t *times, UnsignedInt count, Unsigned
 /// most changes gain by now. With "+VITA_AB=1" in vita_args.txt half of the steps run
 /// without what is being tried (see VitaGameEngine::update()), and a second line has the
 /// time of the steps with it and of those without: frames near each other are nearly the
-/// same work, so the two numbers differ by what was tried and by little else.
-static void noteFrameForBenchmark(UnsignedInt frameBefore, uint64_t workMicroseconds, Bool alternating, Bool without)
+/// same work, so the two numbers differ by what was tried and by little else. Up to
+/// TRIAL_COUNT things can be tried in one run, each switched off in a half of its own; the
+/// halves are independent of each other, so what the others gain is in both halves of each.
+enum { TRIAL_COUNT = 3 };
+static void noteFrameForBenchmark(UnsignedInt frameBefore, uint64_t workMicroseconds, Bool alternating, UnsignedInt withoutMask)
 {
 	enum { FIRST_FRAME = 150, STRETCH_FRAMES = 300, STRETCHES = 8 };
 
@@ -141,7 +145,7 @@ static void noteFrameForBenchmark(UnsignedInt frameBefore, uint64_t workMicrosec
 	static UnsignedInt stretchFrames = 0;
 	static uint64_t stretchWork = 0;
 	static uint32_t frameWork[STRETCH_FRAMES];
-	static Bool frameWithout[STRETCH_FRAMES];
+	static UnsignedInt frameWithout[STRETCH_FRAMES];
 
 	if (TheGameLogic == nullptr || !TheGameLogic->isInGame())
 	{
@@ -172,7 +176,7 @@ static void noteFrameForBenchmark(UnsignedInt frameBefore, uint64_t workMicrosec
 	if (stretchFrames < STRETCH_FRAMES)
 	{
 		frameWork[stretchFrames] = static_cast<uint32_t>(workMicroseconds);
-		frameWithout[stretchFrames] = without;
+		frameWithout[stretchFrames] = withoutMask;
 	}
 	++stretchFrames;
 	stretchWork += workMicroseconds;
@@ -184,19 +188,22 @@ static void noteFrameForBenchmark(UnsignedInt frameBefore, uint64_t workMicrosec
 		{
 			VitaHelper::takePassCounts(passes, helperPasses);
 
-			// The two halves first, because working out the figure for all sorts the times.
+			// The two halves of each trial first, because working out the figure for all sorts the times.
 			static uint32_t times[STRETCH_FRAMES];
-			UnsignedInt count[2] = { 0, 0 };
-			UnsignedInt left[2] = { 0, 0 };
-			double average[2] = { 0.0, 0.0 };
-			for (Int half = 0; half < 2; ++half)
+			UnsignedInt count[TRIAL_COUNT][2] = {};
+			UnsignedInt left[TRIAL_COUNT][2] = {};
+			double average[TRIAL_COUNT][2] = {};
+			for (Int trial = 0; trial < TRIAL_COUNT; ++trial)
 			{
-				for (UnsignedInt i = 0; i < STRETCH_FRAMES; ++i)
+				for (Int half = 0; half < 2; ++half)
 				{
-					if ((frameWithout[i] ? 1 : 0) == half)
-						times[count[half]++] = frameWork[i];
+					for (UnsignedInt i = 0; i < STRETCH_FRAMES; ++i)
+					{
+						if (((frameWithout[i] >> trial) & 1) == static_cast<UnsignedInt>(half))
+							times[count[trial][half]++] = frameWork[i];
+					}
+					average[trial][half] = averageWithoutSlowest(times, count[trial][half], left[trial][half]);
 				}
-				average[half] = averageWithoutSlowest(times, count[half], left[half]);
 			}
 
 			UnsignedInt leftOfAll = 0;
@@ -207,14 +214,13 @@ static void noteFrameForBenchmark(UnsignedInt frameBefore, uint64_t workMicrosec
 				static_cast<unsigned int>(frame), stretchWork / 1000.0 / stretchFrames, averageOfAll,
 				static_cast<unsigned int>(STRETCH_FRAMES - leftOfAll), helperPasses, passes);
 
-			const VitaHelper::LoopTimes loops = VitaHelper::takeLoopTimes();
-			if (alternating && left[0] != 0 && left[1] != 0)
+			VitaHelper::takeLoopTimes();
+			for (Int trial = 0; alternating && trial < TRIAL_COUNT; ++trial)
 			{
-				fprintf(stderr, "[bench]   %.2f ms per frame with what is being tried (%u frames), %.2f ms without (%u frames), each without its slowest; "
-					"a pass of a shared loop took %.1f us with the helper and %.1f us without\n",
-					average[0], static_cast<unsigned int>(left[0]), average[1], static_cast<unsigned int>(left[1]),
-					loops.sharedPasses != 0 ? static_cast<double>(loops.sharedMicroseconds) / loops.sharedPasses : 0.0,
-					loops.alonePasses != 0 ? static_cast<double>(loops.aloneMicroseconds) / loops.alonePasses : 0.0);
+				if (left[trial][0] == 0 || left[trial][1] == 0)
+					continue;
+				fprintf(stderr, "[bench]   trial %d: %.2f ms per frame with what is being tried (%u frames), %.2f ms without (%u frames), each without its slowest\n",
+					trial + 1, average[trial][0], static_cast<unsigned int>(left[trial][0]), average[trial][1], static_cast<unsigned int>(left[trial][1]));
 			}
 			fflush(stderr);
 		}
@@ -274,18 +280,71 @@ void VitaGameEngine::update()
 	// noteFrameForBenchmark(). What is being tried is whatever is switched here; it has to
 	// be something that leaves the picture and the game as they are.
 	//
-	// Which half: the steps whose number has an odd count of one bits. Taking every other
-	// step would put everything the game does on every second, fourth or eighth step into
-	// one of the halves; this order has as many of each in both.
+	// Which half: for the first trial the steps whose number has an odd count of one bits.
+	// Taking every other step would put everything the game does on every second, fourth or
+	// eighth step into one of the halves; this order has as many of each in both. For the
+	// second, the steps whose number times the golden ratio has a fraction of a half or more,
+	// which spreads as evenly over the steps and is independent of the first; for the third,
+	// those where that fraction is in the second or fourth quarter.
+	//
+	// The trials switch nothing at the moment: the difference between their halves is what the
+	// measurement varies by itself. A change being tried is switched here by its bit of
+	// withoutMask (trial 1: bit 0, trial 2: bit 1, trial 3: bit 2).
 	static const Bool alternating = getenv("VITA_AB") != nullptr && atoi(getenv("VITA_AB")) != 0;
-	const Bool without = alternating && (__builtin_popcount(frameBefore) & 1) != 0;
+	UnsignedInt withoutMask = 0;
 	if (alternating)
-		VitaHelper::setEnabled(!without);
+	{
+		if ((__builtin_popcount(frameBefore) & 1) != 0)
+			withoutMask |= 1;
+		if (((frameBefore * 0x9E3779B9u) >> 31) != 0)
+			withoutMask |= 2;
+		if ((((frameBefore * 0x9E3779B9u) >> 30) & 1) != 0)
+			withoutMask |= 4;
+	}
+
+	// "+VITA_NO_TREES=1": missions are loaded without their trees and shrubs (the game's own
+	// option, GlobalData::m_useTrees, which the map loader reads), to measure what they cost.
+	// The option is set again on every frame, over whatever the detail level set.
+	static const Bool noTrees = getenv("VITA_NO_TREES") != nullptr && atoi(getenv("VITA_NO_TREES")) != 0;
+	if (noTrees && TheWritableGlobalData != nullptr)
+		TheWritableGlobalData->m_useTrees = FALSE;
+
+	// "+VITA_HIDE_TREES=1": the trees and shrubs of a mission are there for the logic and the
+	// client, but hidden (Drawable::setDrawableHidden()) once the mission runs, so that they
+	// are neither positioned, nor drawn, nor given their icons. Together with a run that has
+	// them and one without them (VITA_NO_TREES) this says how much of what they cost is the
+	// drawing, which drawing them in batches could save, and how much their being there.
+	static const Bool hideTrees = getenv("VITA_HIDE_TREES") != nullptr && atoi(getenv("VITA_HIDE_TREES")) != 0;
+	if (hideTrees && TheGameClient != nullptr)
+	{
+		static Bool hiddenInThisMission = FALSE;
+		const Bool inMission = TheGameLogic != nullptr && TheGameLogic->isInGame() && !TheGameLogic->isInShellGame()
+			&& TheGameLogic->getFrame() > 1;
+		if (!inMission)
+		{
+			hiddenInThisMission = FALSE;
+		}
+		else if (!hiddenInThisMission)
+		{
+			unsigned int hidden = 0;
+			for (Drawable *draw = TheGameClient->firstDrawable(); draw != nullptr; draw = draw->getNextDrawable())
+			{
+				if (draw->isKindOf(KINDOF_SHRUBBERY))
+				{
+					draw->setDrawableHidden(true);
+					++hidden;
+				}
+			}
+			hiddenInThisMission = TRUE;
+			fprintf(stderr, "[trees] %u trees and shrubs are hidden\n", hidden);
+			fflush(stderr);
+		}
+	}
 
 	const uint64_t start = VitaDiagnostics::now();
 	GameEngine::update();
 	const uint64_t work = VitaDiagnostics::now() - start;
-	noteFrameForBenchmark(frameBefore, work, alternating, without);
+	noteFrameForBenchmark(frameBefore, work, alternating, withoutMask);
 	notePace(frameBefore);
 
 	// How long frames with and without a picture take decides how many pictures may be left
