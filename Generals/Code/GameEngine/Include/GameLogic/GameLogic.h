@@ -276,6 +276,8 @@ private:
 	Int rebalanceChildSleepyUpdate(Int i);
 	void remakeSleepyUpdate();
 	void validateSleepyUpdate() const;
+	void eraseSleepyUpdatesOf(Object *obj);
+	void swapSleepyUpdates(Int i, Int j);
 
 	bool onNewGame(GameMessage *msg);
 	bool onClearGameData(GameMessage *msg, AIGroupPtr &currentlySelectedGroup);
@@ -412,6 +414,12 @@ public:
 	// (for an excellent discussion of priority queues, please see:
 	// http://dogma.net/markn/articles/pq_stl/priority.htm)
 	std::vector<UpdateModulePtr> m_sleepyUpdates;
+	// GeneralsX @performance Claude 18/11/2026 friend_getPriority() of each module of m_sleepyUpdates, at the
+	// same index, changed with it by the same access methods. Keeping the heap in order compares the
+	// priorities of a dozen modules each time; reading them from the modules took a load from memory
+	// that is in no cache for each, and the modules are spread over the memory pools. The order of
+	// the heap is the same, so the modules are updated in the same order as before.
+	std::vector<UnsignedInt> m_sleepyPriorities;
 
 #ifdef ALLOW_NONSLEEPY_UPDATES
 	// this is a plain old list, not a pq.

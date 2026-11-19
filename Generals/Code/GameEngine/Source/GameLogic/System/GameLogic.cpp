@@ -513,6 +513,7 @@ void GameLogic::reset()
 		(*it)->friend_setIndexInLogic(-1);
 	}
 	m_sleepyUpdates.clear();
+	m_sleepyPriorities.clear();
 	m_curUpdateModule = nullptr;
 
 	m_isScoringEnabled = TRUE;
@@ -2312,38 +2313,7 @@ void GameLogic::processDestroyList()
 		}
 #endif
 
-		/*
-			this looks odd, but is necessary; since erasing a single entry can shuffle others in the list
-			(in order to maintain its heap-ness), we must do two passes: one to find the updates for this
-			object, another to actually erase 'em.
-
-			(in case you're wondering: yes, this is still more efficient than just deleting them
-			and rebalancing the entire heap afterwards, at least for real-world maps, since an individual
-			rebalance is O(log N) and a full rebalance is O(N)... so unless you are deleting the majority
-			of the objects in the world every frame, we come out well ahead this way.)
-		*/
-
-		const Int MAX_SUO = 256;
-		UpdateModulePtr sleepyUpdatesForThisObject[MAX_SUO];
-		Int numSUO = 0;
-
-		for (std::vector<UpdateModulePtr>::iterator it2 = m_sleepyUpdates.begin(); it2 != m_sleepyUpdates.end(); ++it2)
-		{
-			UpdateModulePtr u = *it2;
-			if (u->friend_getObject() == currentObject && numSUO < MAX_SUO)
-			{
-				sleepyUpdatesForThisObject[numSUO++] = u;
-			}
-		}
-
-		for (--numSUO; numSUO >= 0; --numSUO)
-		{
-			// have to re-get idx each time since each call to erase might change others.
-			Int idx = sleepyUpdatesForThisObject[numSUO]->friend_getIndexInLogic();
-			DEBUG_ASSERTCRASH(m_sleepyUpdates[idx] == sleepyUpdatesForThisObject[numSUO], ("Hmm, expected update mismatch here"));
-			eraseSleepyUpdate(idx);
-			DEBUG_ASSERTCRASH(sleepyUpdatesForThisObject[numSUO]->friend_getIndexInLogic() == -1, ("Hmm, expected index to be -1 here"));
-		}
+		eraseSleepyUpdatesOf(currentObject);
 
 		currentObject->removeFromList(&m_objList);//remove from object list
 
@@ -2657,6 +2627,7 @@ inline void GameLogic::validateSleepyUpdate() const
 	for (i = 0; i < sz; ++i)
 	{
 		DEBUG_ASSERTCRASH(m_sleepyUpdates[i]->friend_getIndexInLogic() == i, ("index mismatch: expected %d, got %d",i,m_sleepyUpdates[i]->friend_getIndexInLogic()));
+		DEBUG_ASSERTCRASH(m_sleepyPriorities[i] == m_sleepyUpdates[i]->friend_getPriority(), ("priority mismatch at %d",i));
 		UnsignedInt pri = m_sleepyUpdates[i]->friend_getPriority();
 		if (i > 0)
 		{
@@ -2694,26 +2665,116 @@ void GameLogic::eraseSleepyUpdate(Int i)
 	if (i < last)
 	{
 		m_sleepyUpdates[i] = m_sleepyUpdates[last];
+		m_sleepyPriorities[i] = m_sleepyPriorities[last];
 		m_sleepyUpdates[i]->friend_setIndexInLogic(i);
 		m_sleepyUpdates.pop_back();
+		m_sleepyPriorities.pop_back();
 		rebalanceSleepyUpdate(i);
 	}
 	else
 	{
 		m_sleepyUpdates.pop_back();
+		m_sleepyPriorities.pop_back();
 	}
 }
 
 // ------------------------------------------------------------------------------------------------
-inline Bool isLowerPriority(const UpdateModulePtr a, const UpdateModulePtr b)
+/** Takes the update modules of an object that is being destroyed out of the heap. */
+// ------------------------------------------------------------------------------------------------
+void GameLogic::eraseSleepyUpdatesOf(Object *obj)
+{
+	/*
+		this looks odd, but is necessary; since erasing a single entry can shuffle others in the list
+		(in order to maintain its heap-ness), we must do two passes: one to find the updates for this
+		object, another to actually erase 'em.
+
+		(in case you're wondering: yes, this is still more efficient than just deleting them
+		and rebalancing the entire heap afterwards, at least for real-world maps, since an individual
+		rebalance is O(log N) and a full rebalance is O(N)... so unless you are deleting the majority
+		of the objects in the world every frame, we come out well ahead this way.)
+	*/
+
+	const Int MAX_SUO = 256;
+	UpdateModulePtr sleepyUpdatesForThisObject[MAX_SUO];
+	Int numSUO = 0;
+
+	{
+		// GeneralsX @performance Claude 18/11/2026 The modules of the object that are in the heap are those
+		// of its behavior modules that have a place in it: all update modules come from there
+		// (registerObject(), loadPostProcess()). The walk over the whole heap below found them in
+		// the order of their places, with a load from memory that is in no cache for each module of
+		// every object of the map, and that once per object destroyed. They are put in that order
+		// here, the lowest places first if there are ever more than MAX_SUO of them, so that they are
+		// taken out in the same order as before and the heap ends up the same.
+		Int places[MAX_SUO];
+		for (BehaviorModule** b = obj->getBehaviorModules(); *b; ++b)
+		{
+#ifdef DIRECT_UPDATEMODULE_ACCESS
+			UpdateModulePtr u = (UpdateModulePtr)((*b)->getUpdate());
+#else
+			UpdateModulePtr u = (*b)->getUpdate();
+#endif
+			if (!u)
+				continue;
+
+			const Int place = u->friend_getIndexInLogic();
+			if (place < 0)
+				continue;
+			if (numSUO == MAX_SUO && place > places[MAX_SUO - 1])
+				continue;
+
+			Int k = (numSUO < MAX_SUO) ? numSUO++ : MAX_SUO - 1;
+			while (k > 0 && places[k - 1] > place)
+			{
+				places[k] = places[k - 1];
+				--k;
+			}
+			places[k] = place;
+		}
+
+		for (Int k = 0; k < numSUO; ++k)
+		{
+			sleepyUpdatesForThisObject[k] = m_sleepyUpdates[places[k]];
+		}
+	}
+
+	for (--numSUO; numSUO >= 0; --numSUO)
+	{
+		// have to re-get idx each time since each call to erase might change others.
+		Int idx = sleepyUpdatesForThisObject[numSUO]->friend_getIndexInLogic();
+		DEBUG_ASSERTCRASH(m_sleepyUpdates[idx] == sleepyUpdatesForThisObject[numSUO], ("Hmm, expected update mismatch here"));
+		eraseSleepyUpdate(idx);
+		DEBUG_ASSERTCRASH(sleepyUpdatesForThisObject[numSUO]->friend_getIndexInLogic() == -1, ("Hmm, expected index to be -1 here"));
+	}
+}
+
+// ------------------------------------------------------------------------------------------------
+// GeneralsX @performance Claude 18/11/2026 Compares the entries at two indices of the heap, by the
+// priorities kept beside it (m_sleepyPriorities) instead of in the modules.
+static inline Bool isLowerPriority(const UnsignedInt *priorities, Int a, Int b)
 {
 	// return true iff a is lower pri than b.
 	// remember: lower ordinal value means higher priority.
 	// therefore, higher ordinal value means lower priority.
-	DEBUG_ASSERTCRASH(a && b, ("these may no longer be null"));
-	UnsignedInt f1 = a->friend_getPriority();
-	UnsignedInt f2 = b->friend_getPriority();
-	return f1 > f2;
+	return priorities[a] > priorities[b];
+}
+
+// ------------------------------------------------------------------------------------------------
+// GeneralsX @performance Claude 18/11/2026 Swaps two entries of the heap and their priorities.
+inline void GameLogic::swapSleepyUpdates(Int i, Int j)
+{
+	UpdateModulePtr a = m_sleepyUpdates[i];
+	UpdateModulePtr b = m_sleepyUpdates[j];
+
+	m_sleepyUpdates[i] = b;
+	m_sleepyUpdates[j] = a;
+
+	const UnsignedInt priority = m_sleepyPriorities[i];
+	m_sleepyPriorities[i] = m_sleepyPriorities[j];
+	m_sleepyPriorities[j] = priority;
+
+	b->friend_setIndexInLogic(i);
+	a->friend_setIndexInLogic(j);
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -2724,16 +2785,9 @@ Int GameLogic::rebalanceParentSleepyUpdate(Int i)
 	DEBUG_ASSERTCRASH(i >= 0 && i < m_sleepyUpdates.size(), ("bad sleepy idx"));
 
 	Int parent = ((i+1)>>1)-1;
-	while (parent >= 0 && isLowerPriority(m_sleepyUpdates[parent], m_sleepyUpdates[i]))
+	while (parent >= 0 && isLowerPriority(m_sleepyPriorities.data(), parent, i))
 	{
-		UpdateModulePtr a = m_sleepyUpdates[parent];
-		UpdateModulePtr b = m_sleepyUpdates[i];
-
-		m_sleepyUpdates[i] = a;
-		m_sleepyUpdates[parent] = b;
-
-		a->friend_setIndexInLogic(i);
-		b->friend_setIndexInLogic(parent);
+		swapSleepyUpdates(i, parent);
 
 		i = parent;
 		parent = ((parent+1)>>1)-1;
@@ -2749,78 +2803,29 @@ Int GameLogic::rebalanceChildSleepyUpdate(Int i)
 
 	DEBUG_ASSERTCRASH(i >= 0 && i < m_sleepyUpdates.size(), ("bad sleepy idx"));
 
-// this function gets the brunt of the work (we frequently
-// balance down, not up), so this one is hand-unrolled for
-// max efficiency. I have left the pristine non-unrolled
-// version present for clarity. (Yes, this is worth doing.) (srj)
-#if 1
-	UpdateModulePtr* pI = &m_sleepyUpdates[i];
-
+	// GeneralsX @performance Claude 18/11/2026 The comparisons read the priorities kept beside the heap;
+	// the order of the steps is that of the hand-unrolled original (srj).
 	// our children are i*2 and i*2+1
-  Int child = ((i)<<1)+1;
-	UpdateModulePtr* pChild = &m_sleepyUpdates[0] + child;
-	UpdateModulePtr* pSZ = &m_sleepyUpdates[0] + m_sleepyUpdates.size();	// yes, this is off the end.
-
-  while (pChild < pSZ)
+	const UnsignedInt *priorities = m_sleepyPriorities.data();
+	const Int sz = m_sleepyUpdates.size();
+	Int child = ((i)<<1)+1;
+	while (child < sz)
 	{
 		// choose the higher-priority of the two children; we must be higher-pri than that.
-		if (pChild < pSZ-1 && isLowerPriority(*pChild, *(pChild+1)))
-		{
-      ++pChild;
+		if (child < sz-1 && isLowerPriority(priorities, child, child+1))
 			++child;
-		}
 
 		// if we're higher-pri than our children, we're done.
-		if (!isLowerPriority(*pI, *pChild))
+		if (!isLowerPriority(priorities, i, child))
 		{
 			break;
 		}
 
 		// doh. swap with the highest-pri child we have.
-		UpdateModulePtr a = *pChild;
-		UpdateModulePtr b = *pI;
-
-		*pI = a;
-		*pChild = b;
-
-		a->friend_setIndexInLogic(i);
-		b->friend_setIndexInLogic(child);
-
-		i = child;
-		pI = pChild;
-
-		child = ((i)<<1)+1;
-		pChild = &m_sleepyUpdates[0] + child;
-  }
-#else
-	// our children are i*2 and i*2+1
-	Int sz = m_sleepyUpdates.size();
-  Int child = ((i)<<1)+1;
-  while (child < sz)
-	{
-		// choose the higher-priority of the two children; we must be higher-pri than that.
-		if (child < sz-1 && isLowerPriority(m_sleepyUpdates[child], m_sleepyUpdates[child+1]))
-      ++child;
-
-		// if we're higher-pri than our children, we're done.
-		if (!isLowerPriority(m_sleepyUpdates[i], m_sleepyUpdates[child]))
-		{
-			break;
-		}
-
-		// doh. swap with the highest-pri child we have.
-		UpdateModulePtr a = m_sleepyUpdates[child];
-		UpdateModulePtr b = m_sleepyUpdates[i];
-
-		m_sleepyUpdates[i] = a;
-		m_sleepyUpdates[child] = b;
-
-		a->friend_setIndexInLogic(i);
-		b->friend_setIndexInLogic(child);
+		swapSleepyUpdates(i, child);
 		i = child;
 		child = ((i)<<1)+1;
-  }
-#endif
+	}
 	return i;
 }
 
@@ -2858,6 +2863,7 @@ void GameLogic::pushSleepyUpdate(UpdateModulePtr u)
 	DEBUG_ASSERTCRASH(u != nullptr, ("You may not pass null for sleepy update info"));
 
 	m_sleepyUpdates.push_back(u);
+	m_sleepyPriorities.push_back(u->friend_getPriority());
 	u->friend_setIndexInLogic(m_sleepyUpdates.size() - 1);
 
 	rebalanceParentSleepyUpdate(m_sleepyUpdates.size()-1);
@@ -2889,13 +2895,16 @@ void GameLogic::popSleepyUpdate()
 	if (sz > 1)
 	{
 		m_sleepyUpdates[0] = m_sleepyUpdates[sz-1];
+		m_sleepyPriorities[0] = m_sleepyPriorities[sz-1];
 		m_sleepyUpdates[0]->friend_setIndexInLogic(0);
 		m_sleepyUpdates.pop_back();
+		m_sleepyPriorities.pop_back();
 		rebalanceChildSleepyUpdate(0);
 	}
 	else
 	{
 		m_sleepyUpdates.pop_back();
+		m_sleepyPriorities.pop_back();
 	}
 }
 
@@ -2945,6 +2954,7 @@ void GameLogic::friend_awakenUpdateModule(Object* obj, UpdateModulePtr u, Unsign
 
 		// update the value.
 		u->friend_setNextCallFrame(whenToWakeUp);
+		m_sleepyPriorities[idx] = u->friend_getPriority();
 
 		// rebalance.
 		rebalanceSleepyUpdate(idx);
@@ -3493,11 +3503,35 @@ void GameLogic::update()
 
 			// else defer it till next frame and re-push it
 			u->friend_setNextCallFrame(now + sleepLen);
+			// GeneralsX @performance Claude 18/11/2026 Its priority beside the heap, wherever its update has
+			// moved it to (the heap is rebalanced at the top, as before).
+			const Int updatedIndex = u->friend_getIndexInLogic();
+			if (updatedIndex >= 0)
+				m_sleepyPriorities[updatedIndex] = u->friend_getPriority();
 			rebalanceSleepyUpdate(0);
 		}
 	}
 
 	validateSleepyUpdate();
+
+#if defined(__vita__) && defined(VITA_FRAME_PROFILE)
+	// GeneralsX @feature Claude 18/11/2026 The PS Vita's measuring build checks now and then that the
+	// priorities kept beside the heap are those of the modules; one that differs would change the
+	// order in which the modules are updated.
+	if ((now & 63) == 0)
+	{
+		for (size_t i = 0; i < m_sleepyUpdates.size(); ++i)
+		{
+			if (m_sleepyPriorities[i] != m_sleepyUpdates[i]->friend_getPriority())
+			{
+				fprintf(stderr, "[logic] frame %u: the priority of sleepy update %u is %u beside the heap and %u in the module\n",
+					now, static_cast<unsigned int>(i), m_sleepyPriorities[i], m_sleepyUpdates[i]->friend_getPriority());
+				fflush(stderr);
+				break;
+			}
+		}
+	}
+#endif
 
 	// update the Artificial Intelligence system
 	{
@@ -4997,6 +5031,7 @@ void GameLogic::loadPostProcess()
 		(*it)->friend_setIndexInLogic(-1);
 	}
 	m_sleepyUpdates.clear();
+	m_sleepyPriorities.clear();
 #ifdef ALLOW_NONSLEEPY_UPDATES
 	m_normalUpdates.clear();
 #else
@@ -5039,6 +5074,7 @@ void GameLogic::loadPostProcess()
 #endif
 			{
 				m_sleepyUpdates.push_back(u);
+				m_sleepyPriorities.push_back(u->friend_getPriority());
 				u->friend_setIndexInLogic(m_sleepyUpdates.size() - 1);
 			}
 
