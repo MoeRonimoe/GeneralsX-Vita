@@ -124,6 +124,8 @@ public:
 	Bool isInGameLogicUpdate() const { return m_isInUpdate; }
 	Bool hasUpdated() const { return m_hasUpdated; } ///< Returns true if the logic frame has advanced in the current client/render update
 	UnsignedInt getFrame();										///< Returns the current simulation frame number
+	// GeneralsX @performance Claude 19/11/2026 An object is disabled until this step; see m_nextDisabledExpiry.
+	void noteDisabledUntil(UnsignedInt frame) { if (frame < m_nextDisabledExpiry) m_nextDisabledExpiry = frame; }
 	UnsignedInt getCRC( Int mode = CRC_CACHED, AsciiString deepCRCFileName = AsciiString::TheEmptyString );		///< Returns the CRC
 
 	void setObjectIDCounter( ObjectID nextObjID ) { m_nextObjID = nextObjID; }
@@ -419,6 +421,13 @@ public:
 	// that is in no cache for each, and the modules are spread over the memory pools. The order of
 	// the heap is the same, so the modules are updated in the same order as before.
 	std::vector<UnsignedInt> m_sleepyPriorities;
+
+	// GeneralsX @performance Claude 19/11/2026 No disabling of any object ends before this step (it is
+	// at most the earliest m_disabledTillFrame of a type an object is disabled by). Until then the
+	// pass at the end of a step that asks every disabled object whether its disabling has ended
+	// finds nothing, and is left out: it read two lines of memory of each of the 2000 objects of a
+	// map. Object::setDisabledUntil() moves it earlier (noteDisabledUntil()).
+	UnsignedInt m_nextDisabledExpiry;
 
 #ifdef ALLOW_NONSLEEPY_UPDATES
 	// this is a plain old list, not a pq.

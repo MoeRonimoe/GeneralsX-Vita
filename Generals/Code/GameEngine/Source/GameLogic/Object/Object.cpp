@@ -1969,6 +1969,8 @@ void Object::setDisabledUntil( DisabledType type, UnsignedInt frame )
 
 		m_disabledTillFrame[ type ] = frame;
 		m_disabledMask.set( type, frame > TheGameLogic->getFrame() );
+		// GeneralsX @performance Claude 19/11/2026 For the end-of-step pass over disabled objects.
+		TheGameLogic->noteDisabledUntil( frame );
 
 		if( m_drawable )
 		{
@@ -2122,6 +2124,18 @@ Bool Object::clearDisabled( DisabledType type )
 
 //-------------------------------------------------------------------------------------------------
 //Checks any timers and clears disabled statii that have expired.
+//-------------------------------------------------------------------------------------------------
+UnsignedInt Object::getEarliestDisabledTillFrame() const
+{
+	UnsignedInt earliest = 0xFFFFFFFFu;
+	for( int i = 0; i < DISABLED_COUNT; i++ )
+	{
+		if( isDisabledByType( (DisabledType)i ) && m_disabledTillFrame[ i ] < earliest )
+			earliest = m_disabledTillFrame[ i ];
+	}
+	return earliest;
+}
+
 //-------------------------------------------------------------------------------------------------
 void Object::checkDisabledStatus()
 {
@@ -3726,6 +3740,10 @@ void Object::xfer( Xfer *xfer )
 
 	// disabled till frame
 	xfer->xferUser( m_disabledTillFrame, sizeof( UnsignedInt ) * DISABLED_COUNT );
+	// GeneralsX @performance Claude 19/11/2026 A loaded object may be disabled until any step: the next
+	// end-of-step pass over disabled objects looks at all of them.
+	if( xfer->getXferMode() == XFER_LOAD )
+		TheGameLogic->noteDisabledUntil( 0 );
 
 	// OK, now that we have xferred our status bits and disabled data, it's safe to set the team...
 	// TheSuperHackers @todo Refactor so that this code can be moved to loadPostProcess.

@@ -286,6 +286,7 @@ GameLogic::GameLogic()
 	m_startNewGame = FALSE;
 
 	m_frame = 0;
+	m_nextDisabledExpiry = 0;
 	m_hasUpdated = FALSE;
 	m_frameObjectsChangedTriggerAreas = 0;
 	m_width = 0;
@@ -501,6 +502,7 @@ void GameLogic::reset()
 	m_objectTOC.clear();
 
 	m_frame = 0;
+	m_nextDisabledExpiry = 0;
 	m_hasUpdated = FALSE;
 	m_width = DEFAULT_WORLD_WIDTH;
 	m_height = DEFAULT_WORLD_HEIGHT;
@@ -1065,6 +1067,7 @@ void GameLogic::tryStartNewGame( Bool loadingSaveGame )
 
 	// reset the frame counter
 	m_frame = 0;
+	m_nextDisabledExpiry = 0;
 	m_hasUpdated = FALSE;
 
 #ifdef DEBUG_CRC
@@ -3552,13 +3555,50 @@ void GameLogic::update()
 	TheLocomotorStore->UPDATE();
 	TheVictoryConditions->UPDATE();
 
+#if defined(__vita__) && defined(VITA_FRAME_PROFILE)
+	// GeneralsX @feature Claude 19/11/2026 The PS Vita's measuring build checks now and then that no
+	// disabling ends on a step the pass below leaves out, and that the sleepy update heap is in order.
+	if ((m_frame & 63) == 32)
 	{
+		if (m_frame < m_nextDisabledExpiry)
+		{
+			for (Object *obj = m_objList; obj; obj = obj->getNextObject())
+			{
+				if (obj->isDisabled() && obj->getEarliestDisabledTillFrame() <= m_frame)
+				{
+					fprintf(stderr, "[logic] frame %u: a disabling of object %u ends at %u, the pass waits for %u\n",
+						m_frame, static_cast<unsigned int>(obj->getID()), obj->getEarliestDisabledTillFrame(), m_nextDisabledExpiry);
+					fflush(stderr);
+					break;
+				}
+			}
+		}
+		for (size_t i = 1; i < m_sleepyPriorities.size(); ++i)
+		{
+			if (m_sleepyPriorities[((i+1)>>1)-1] > m_sleepyPriorities[i])
+			{
+				fprintf(stderr, "[logic] frame %u: the sleepy update heap is out of order at %u\n", m_frame, static_cast<unsigned int>(i));
+				fflush(stderr);
+				break;
+			}
+		}
+	}
+#endif
+
+	// GeneralsX @performance Claude 19/11/2026 Only on a step where a disabling may end (m_nextDisabledExpiry);
+	// on the others every call below would find nothing to do. The pass works out when the next one ends.
+	// What ending a disabling sets off may disable other objects meanwhile (setDisabledUntil() then
+	// notes it too), so the pass only ever moves the step earlier.
+	if (m_frame >= m_nextDisabledExpiry)
+	{
+		m_nextDisabledExpiry = 0xFFFFFFFFu;
 		//Handle disabled statii (and re-enable objects once frame matches)
 		for( Object *obj = m_objList; obj; obj = obj->getNextObject() )
 		{
 			if( obj->isDisabled() )
 			{
 				obj->checkDisabledStatus();
+				noteDisabledUntil(obj->getEarliestDisabledTillFrame());
 			}
 		}
 	}

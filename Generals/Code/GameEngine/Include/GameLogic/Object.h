@@ -551,6 +551,8 @@ public:
 
 	DisabledMaskType getDisabledFlags() const { return m_disabledMask; }
 	Bool isDisabled() const { return m_disabledMask.any(); }
+	// GeneralsX @performance Claude 19/11/2026 The earliest step at which a disabling of this object ends.
+	UnsignedInt getEarliestDisabledTillFrame() const;
 	Bool clearDisabled( DisabledType type );
 
 	void setDisabled( DisabledType type );
