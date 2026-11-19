@@ -141,7 +141,19 @@ public:
 	void								Get_Deformed_Vertices(Vector3 *dst_vert, Vector3 *dst_norm);
 	void								Get_Deformed_Vertices(Vector3 *dst_vert);
 
-	void								Set_Lighting_Environment(LightEnvironmentClass * light_env) { if (light_env) {m_localLightEnv=*light_env;LightEnvironment = &m_localLightEnv;} else {LightEnvironment = nullptr;} }
+	// GeneralsX @performance Claude 18/11/2026 An environment that lasts until the frame is drawn is
+	// pointed to instead of copied (LightEnvironmentClass::Take_Frame_Environment()).
+	void								Set_Lighting_Environment(LightEnvironmentClass * light_env)
+	{
+		if (light_env == nullptr) {
+			LightEnvironment = nullptr;
+		} else if (LightEnvironmentClass::Is_Frame_Environment(light_env)) {
+			LightEnvironment = light_env;
+		} else {
+			m_localLightEnv=*light_env;
+			LightEnvironment = &m_localLightEnv;
+		}
+	}
 	LightEnvironmentClass *		Get_Lighting_Environment() { return LightEnvironment; }
 	float	Get_Alpha_Override() { return m_alphaOverride;}
 

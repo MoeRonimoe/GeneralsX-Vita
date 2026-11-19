@@ -41,6 +41,9 @@
 #include "WWMath/matrix3d.h"
 #include "camera.h"
 #include "light.h"
+#include "ww3d.h"
+
+#include <cstdint>
 
 /*
 ** Constants
@@ -261,6 +264,41 @@ void LightEnvironmentClass::Pre_Render_Update(const Matrix3D & camera_tm)
 	OutputAmbient.X = WWMath::Clamp(OutputAmbient.X,0.0f,1.0f);
 	OutputAmbient.Y = WWMath::Clamp(OutputAmbient.Y,0.0f,1.0f);
 	OutputAmbient.Z = WWMath::Clamp(OutputAmbient.Z,0.0f,1.0f);
+}
+
+/*
+** GeneralsX @performance Claude 18/11/2026 Light environments that last until the frame is drawn,
+** see lightenvironment.h. A crowded battle renders a few hundred objects per frame; a frame that
+** renders more gives the rest environments of their own.
+*/
+namespace
+{
+	enum { FRAME_ENVIRONMENT_COUNT = 1024 };
+	LightEnvironmentClass	FrameEnvironments[FRAME_ENVIRONMENT_COUNT];
+	int							FrameEnvironmentsTaken = 0;
+	unsigned int				FrameEnvironmentsFrame = 0;
+}
+
+LightEnvironmentClass * LightEnvironmentClass::Take_Frame_Environment()
+{
+	// WW3D counts a frame after it has drawn everything of it.
+	const unsigned int frame = WW3D::Get_Frame_Count();
+	if (frame != FrameEnvironmentsFrame) {
+		FrameEnvironmentsFrame = frame;
+		FrameEnvironmentsTaken = 0;
+	}
+
+	if (FrameEnvironmentsTaken >= FRAME_ENVIRONMENT_COUNT) {
+		return nullptr;
+	}
+	return &FrameEnvironments[FrameEnvironmentsTaken++];
+}
+
+bool LightEnvironmentClass::Is_Frame_Environment(const LightEnvironmentClass * env)
+{
+	const uintptr_t address = reinterpret_cast<uintptr_t>(env);
+	return address >= reinterpret_cast<uintptr_t>(&FrameEnvironments[0])
+		&& address < reinterpret_cast<uintptr_t>(&FrameEnvironments[FRAME_ENVIRONMENT_COUNT]);
 }
 
 void LightEnvironmentClass::Set_Lighting_LOD_Cutoff(float inten)

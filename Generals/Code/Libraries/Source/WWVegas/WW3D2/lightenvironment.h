@@ -112,6 +112,19 @@ public:
 	static int			Get_Max_Lights() { return MAX_LIGHTS; }
 	enum { MAX_LIGHTS = 4 };	//Made this public, so other code can tell how many lights are allowed. - MW
 
+	/*
+	** GeneralsX @performance Claude 18/11/2026 Light environments that last until the frame is drawn.
+	** A mesh keeps the light environment it is rendered with until the renderer draws it, later
+	** in the frame, and it used to copy the environment into itself for that (460 bytes): every
+	** mesh of every object, on every frame, into memory that is in no cache by then. The scene
+	** builds one environment per object in one of these instead, and the meshes of the object
+	** point to it. They are handed out again once WW3D has counted a frame, which it does after
+	** the frame has been drawn. Take_Frame_Environment() returns null when all are taken, and
+	** the caller then uses an environment of its own, which the meshes copy as before.
+	*/
+	static LightEnvironmentClass *	Take_Frame_Environment();
+	static bool								Is_Frame_Environment(const LightEnvironmentClass * env);
+
 protected:
 
 	struct InputLightStruct
