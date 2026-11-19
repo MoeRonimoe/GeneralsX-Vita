@@ -277,7 +277,6 @@ private:
 	void remakeSleepyUpdate();
 	void validateSleepyUpdate() const;
 	void eraseSleepyUpdatesOf(Object *obj);
-	void swapSleepyUpdates(Int i, Int j);
 
 	bool onNewGame(GameMessage *msg);
 	bool onClearGameData(GameMessage *msg, AIGroupPtr &currentlySelectedGroup);

@@ -2749,50 +2749,32 @@ void GameLogic::eraseSleepyUpdatesOf(Object *obj)
 }
 
 // ------------------------------------------------------------------------------------------------
-// GeneralsX @performance Claude 18/11/2026 Compares the entries at two indices of the heap, by the
-// priorities kept beside it (m_sleepyPriorities) instead of in the modules.
-static inline Bool isLowerPriority(const UnsignedInt *priorities, Int a, Int b)
-{
-	// return true iff a is lower pri than b.
-	// remember: lower ordinal value means higher priority.
-	// therefore, higher ordinal value means lower priority.
-	return priorities[a] > priorities[b];
-}
-
-// ------------------------------------------------------------------------------------------------
-// GeneralsX @performance Claude 18/11/2026 Swaps two entries of the heap and their priorities.
-inline void GameLogic::swapSleepyUpdates(Int i, Int j)
-{
-	UpdateModulePtr a = m_sleepyUpdates[i];
-	UpdateModulePtr b = m_sleepyUpdates[j];
-
-	m_sleepyUpdates[i] = b;
-	m_sleepyUpdates[j] = a;
-
-	const UnsignedInt priority = m_sleepyPriorities[i];
-	m_sleepyPriorities[i] = m_sleepyPriorities[j];
-	m_sleepyPriorities[j] = priority;
-
-	b->friend_setIndexInLogic(i);
-	a->friend_setIndexInLogic(j);
-}
-
-// ------------------------------------------------------------------------------------------------
 Int GameLogic::rebalanceParentSleepyUpdate(Int i)
 {
 	USE_PERF_TIMER(SleepyMaintenance)
 
 	DEBUG_ASSERTCRASH(i >= 0 && i < m_sleepyUpdates.size(), ("bad sleepy idx"));
 
+	// GeneralsX @performance Claude 19/11/2026 The entry moves up through a hole: each parent it passes is
+	// moved down once, and the entry is written where it ends up, instead of being swapped with each.
+	// The comparisons and where every entry ends up are those of the swaps.
 	Int parent = ((i+1)>>1)-1;
-	while (parent >= 0 && isLowerPriority(m_sleepyPriorities.data(), parent, i))
+	UpdateModulePtr *updates = m_sleepyUpdates.data();
+	UnsignedInt *priorities = m_sleepyPriorities.data();
+	const UpdateModulePtr moving = updates[i];
+	const UnsignedInt movingPriority = priorities[i];
+	while (parent >= 0 && priorities[parent] > movingPriority)
 	{
-		swapSleepyUpdates(i, parent);
+		updates[i] = updates[parent];
+		priorities[i] = priorities[parent];
+		updates[i]->friend_setIndexInLogic(i);
 
 		i = parent;
 		parent = ((parent+1)>>1)-1;
 	}
-
+	updates[i] = moving;
+	priorities[i] = movingPriority;
+	moving->friend_setIndexInLogic(i);
 	return i;
 }
 
@@ -2806,26 +2788,34 @@ Int GameLogic::rebalanceChildSleepyUpdate(Int i)
 	// GeneralsX @performance Claude 18/11/2026 The comparisons read the priorities kept beside the heap;
 	// the order of the steps is that of the hand-unrolled original (srj).
 	// our children are i*2 and i*2+1
-	const UnsignedInt *priorities = m_sleepyPriorities.data();
+	// GeneralsX @performance Claude 19/11/2026 The entry moves down through a hole, see
+	// rebalanceParentSleepyUpdate().
 	const Int sz = m_sleepyUpdates.size();
 	Int child = ((i)<<1)+1;
+	UpdateModulePtr *updates = m_sleepyUpdates.data();
+	UnsignedInt *priorities = m_sleepyPriorities.data();
+	const UpdateModulePtr moving = updates[i];
+	const UnsignedInt movingPriority = priorities[i];
 	while (child < sz)
 	{
 		// choose the higher-priority of the two children; we must be higher-pri than that.
-		if (child < sz-1 && isLowerPriority(priorities, child, child+1))
+		if (child < sz-1 && priorities[child] > priorities[child+1])
 			++child;
 
 		// if we're higher-pri than our children, we're done.
-		if (!isLowerPriority(priorities, i, child))
-		{
+		if (!(movingPriority > priorities[child]))
 			break;
-		}
 
-		// doh. swap with the highest-pri child we have.
-		swapSleepyUpdates(i, child);
+		// doh. move the highest-pri child we have up.
+		updates[i] = updates[child];
+		priorities[i] = priorities[child];
+		updates[i]->friend_setIndexInLogic(i);
 		i = child;
 		child = ((i)<<1)+1;
 	}
+	updates[i] = moving;
+	priorities[i] = movingPriority;
+	moving->friend_setIndexInLogic(i);
 	return i;
 }
 
