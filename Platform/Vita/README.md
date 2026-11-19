@@ -10,7 +10,8 @@ Vita build reuses its POSIX code paths and replaces the parts that need a deskto
 **On a console the game starts and reaches the main menu: the menus, their texts and the
 pointer work. The training mission can be played: its opening sequence plays, units can
 be commanded and fight, a game can be saved, and the mission and the game can be left
-again. It runs at about 16 frames per second there, slower in a battle. Units, buildings
+again. It runs at about 30 frames per second in its calm stretches and 16 to 18 in its
+opening battle (measured with `+VITA_CATCHUP=0` and the frame profile on). Units, buildings
 and roads look right; effects such as explosions and smoke and the water have not been
 checked since they were last reported wrong. Music, sound effects and voices play (see
 "Sound").** Everything behind that is unverified; expect it to fail
@@ -131,6 +132,9 @@ instead; the platform layer reads its switches for experiments that way:
 | `VITA_SAMPLE` | in a measuring build (`VITA_CALL_PROFILE`): samples per second of the game's thread, written to `vita_samples.bin` at the end (see "Finding out where the time goes") |
 | `VITA_CATCHUP` | `0`: one step of the logic per picture, the game in slow motion where the console cannot draw 30 pictures per second (see "The speed of the game") |
 | `VITA_AB` | half of the steps of the logic run without what is being tried, for the `[bench]` lines (see "Finding out where the time goes") |
+| `VITA_TREE_BATCH` | `0`: every tree is drawn on its own, without the tree batch (see the notes at the end) |
+| `VITA_NO_TREES` | missions are loaded without their trees and shrubs, to measure what they cost |
+| `VITA_HIDE_TREES` | the trees and shrubs of a mission are there but hidden, to measure what drawing them costs |
 | `VITA_MEMTEST` | measures the console's memory and cores before the game starts (see "What the console is good at") |
 | `VITA_PRELOAD` | what a mission's units and buildings need is loaded with the mission, not when first shown (`m_preloadAssets` of the engine). Tried once: the training mission then stood at 95 % for a long time, and the game ended with an exception when units were selected. The log of that run was lost, so the reason is not known; running out of memory is the likely one. |
 
@@ -296,8 +300,15 @@ of the steps of the logic, and each `[bench]` line is followed by the time of th
 with it and of those without. Frames near each other are nearly the same work, so the two
 numbers differ by what was tried and by little else. The half is the steps whose number
 has an odd count of one bits: every other step would put whatever the game does on every
-second or fourth step into one half. What is switched is written in `update()`; at the
-moment it is the helper thread.
+second or fourth step into one half. What is switched is written in `update()`. Two
+things can be tried in one run, each switched off in a half of its own that is independent
+of the other's (the second takes the steps whose number times the golden ratio has a
+fraction of a half or more), so each gets a `[bench]   trial n:` line and what the other
+gains is in both of its halves. Two runs of the same build put the difference between
+the halves of a trial within about a millisecond of each other; a change has to show in
+most of the eight stretches, in two runs, to count. At the moment trial 1 is the light
+environments of the scene and trial 2 the heap of the logic's update modules (see the
+notes at the end).
 
 **What the console is good at.** `+VITA_MEMTEST=1` has `compat/VitaMachineTest.cpp`
 measure the console before the game starts, in a second. At 444 MHz:
@@ -760,6 +771,93 @@ calls vitaGL directly; that file does not include `VitaD3D8GL.h`.
     find the few that are not drawn through the lists of the first walk; every object has
     the sun added to its lights anew (`LightEnvironmentClass::Add_Light()`); the game walks
     all 1900 drawables of a map three times per frame and the scene its 1900 objects twice.
+- What the timers of a fourth round showed (run59 to run62, November), with frames with and
+  without each change side by side (`+VITA_AB=1`):
+  - The scene builds a light environment for every object it draws, and every mesh of the
+    object copied it into itself (460 bytes) to have it when the renderer draws the mesh
+    later in the frame: a thousand copies per frame with many soldiers, into memory that
+    is in no cache by then. Objects now build theirs in environments that last until the
+    frame is drawn (`LightEnvironmentClass::Take_Frame_Environment()`), and the meshes
+    point to them. Nearly every object is reached by nothing but the directional lights
+    (sun, moon), and then its environment is the same as every other such object's: those
+    share one per pass over the scene (`RTS3DScene::sharedLightEnvironment()`); an object
+    with a tint or near a point light (muzzle flashes, explosions) still makes its own.
+    Together 1.5 to 2.5 ms per frame, up to 4 in the stretch with the most soldiers,
+    measured in three runs; the copies alone were 0.5.
+  - The logic keeps its sleeping update modules in a heap ordered by when each wakes up,
+    and every comparison read that from the module, from memory that is in no cache: the
+    modules of 1900 objects are spread over the memory pools. The priorities are kept in an
+    array beside the heap now (`GameLogic::m_sleepyPriorities`), changed by the same
+    functions, so the heap and the order in which the modules run are what they were. When
+    an object was destroyed, the logic looked at every module of the heap to find the
+    object's; it takes them from the object's behavior modules now, in the order the search
+    found them. About half a millisecond per frame; more where much is destroyed. A
+    measuring build (`VITA_FRAME_PROFILE`) checks every 64 steps that the priorities beside
+    the heap are the modules' and says so in a `[logic]` line if not; none has been seen.
+  - Tried and taken out again, because neither showed in the frame times: keeping the
+    bounding box of a model (`HLodClass::Get_Obj_Space_Bounding_Box()` works it out on every
+    call from where the animation puts its box bone, and the scene asks every model for it
+    on every frame; nearly every model is animated, so what it is worked out from changes
+    every frame anyway), and positioning only the drawables near the quadrilateral where
+    the view meets the ground instead of all in the box around it (the box is barely larger
+    in the training mission: 470 drawables either way, for 280 objects drawn).
+  - The user interface takes 2 to 4 ms per frame; drawing its windows about 1 ms of that,
+    mostly static texts and buttons.
+  - Per object drawn, the scene spends 6 us on its lights and 11 us handing its meshes to
+    the renderer (`Scene_renderOneObject`, `Scene_objRender`), and the renderer 10 us per
+    draw call of a rigid mesh. `Drawable::draw()` for each drawable in the view, which
+    positions the models of moving units, took 8 ms of a frame with many soldiers.
+- What a fifth round found and changed (run63 to run75, November), again measured with
+  `+VITA_AB=1`:
+  - The trees. The training map has 1326 trees and shrubs, each an object with a
+    `W3DModelDraw` like any unit. Loaded without them (`+VITA_NO_TREES=1`) the calm
+    stretches of the mission took 29 to 31 ms per frame instead of 43 to 46; with them
+    there but hidden (`+VITA_HIDE_TREES=1`) 35 to 37. So drawing them cost 7 to 12 ms and
+    their being there 5 to 8 more.
+  - Drawing: an intact tree that stands still is drawn by `W3DTreeBatchRenderer`
+    (behind `W3DTreeBatch.h` in Core, which `W3DModelDraw` talks to) instead of the scene:
+    its meshes are copied into chunks of trees with the same texture, material and shader
+    in one cell of the map, lit as the scene lights an object only the sun reaches, and
+    the fog of war is laid over them by the same pass the scene uses. A tree that burns,
+    falls, is hidden, tinted, sways in the wind or moves leaves the batch and is an object
+    of the scene again; it stays a game object all the time (it burns, spreads the fire
+    and topples as before). The scene puts all trees in when a mission begins
+    (`RTS3DScene::primeTreeBatch()`), because making a chunk's buffers waits for the render
+    thread. A tree the fog of war hides stays in its chunk but is not drawn, as the scene
+    skips such objects; the ghost object that shows a fogged tree as last seen must not put
+    the tree's own model back into the scene (`W3DGhostObject::restoreParentObject()`).
+    `VITA_TREE_BATCH=0` draws every tree on its own again. With a frame profile the log
+    says every ten seconds how many trees the batch holds and draws (`[trees]` lines),
+    and at the start of a mission which trees stayed out and why.
+  - Being there: the client called `updateDrawable()` for every drawable on every frame,
+    and `draw()` for every one in the view, and nearly all of those calls found nothing to
+    do. `Drawable::hasNothingToUpdate()` lets the first be left out until one of the
+    setters of what it looks at is called (`Drawable::wakeUp()`), 1.7 to 2.4 ms; a tree
+    that rests in the batch skips `draw()` the same way (`m_drawResting`), 0.7 to 2.5 ms.
+    Model condition changes are applied lazily by the next `getDrawModules()`, which
+    `draw()` calls, so they wake the drawable too. The members these passes read of each
+    drawable were moved together, next to the list link. The post draw pass of the view
+    asked every drawable in it for its shroud status before `drawIconUI()` found nothing
+    to draw for a tree; it asks `Drawable::drawsNoIconUI()` first now (0.3 ms).
+  - A sampling run (run76) of the opening battle then pointed at three more:
+    `Drawable::friend_lockDirtyStuffForIteration()`, which the scene calls once per frame,
+    asked every drawable of the map whether its model condition had changed; the drawables
+    marked dirty are kept in a list now (`s_dirtyModelDrawables`), 0.7 ms. Draw calls from
+    system memory had their indices moved down in two plain loops into a buffer that was
+    then copied into the render thread's stream; 16 bit indices are looked at with NEON
+    and written straight into the stream now (`RenderThread::Reserve()`), 0.5 ms and up
+    to 2 in the battle. And the relationships of teams and players, which every AI unit
+    asks for each object it looks at when it searches for a target, were in hash maps of a
+    few entries each: a lookup divides by the number of buckets, and the console has no
+    division instruction. They are arrays now (`RelationMap.h`), 0.3 to 0.8 ms in the
+    battle. Asking the drawable instead of its object whether the user interface ignores
+    it (`drawsNoIconUI()`) made no difference and was taken out again. The hottest single
+    function of the battle is posing the bones of animated models
+    (`HTreeClass::Anim_Update_Without_Interpolation()`, 2.5 ms); it was left alone, because
+    the logic reads bone positions from these models and other floating point instructions
+    could change them.
+  - Together the calm stretches went from 43 to 46 ms per frame (22 to 23 fps) to about 33
+    to 35 (29 to 30 fps), the opening battle from about 70 (14 fps) to 56 to 61 (16 to 18).
 - `lstrcpyn()` was mapped to `strncpy()` for all platforms that are not Windows, in
   `string_compat.h` of both games and in WWLib's `osdep.h`. The Windows function copies
   one character less than it is told and always ends the string; `strncpy()` does
