@@ -257,6 +257,7 @@ const Int MAX_ENABLED_MODULES								= 16;
 /*static*/ Anim2DTemplate**	Drawable::s_animationTemplates = nullptr;
 #ifdef DIRTY_CONDITION_FLAGS
 /*static*/ Int							Drawable::s_modelLockCount = 0;
+/*static*/ std::vector<Drawable *>	Drawable::s_dirtyModelDrawables;
 #endif
 
 // ------------------------------------------------------------------------------------------------
@@ -418,7 +419,9 @@ Drawable::Drawable( const ThingTemplate *thingTemplate, DrawableStatusBits statu
 	m_prevTintStatus = 0;
 
 #ifdef DIRTY_CONDITION_FLAGS
-	m_isModelDirty = true;
+	m_isModelDirty = false;
+	m_inDirtyModelList = false;
+	markModelDirty();
 #endif
 
 	m_hidden = false;
@@ -426,6 +429,8 @@ Drawable::Drawable( const ThingTemplate *thingTemplate, DrawableStatusBits statu
 	m_heatVisionOpacity = 0.0f;
 	m_drawableFullyObscuredByShroud = false;
 	m_shroudStatusStale = TRUE;
+	m_nothingToUpdate = FALSE;
+	m_drawResting = FALSE;
 
   m_receivesDynamicLights = TRUE; // a good default... overridden by one of my draw modules if at all
 
@@ -493,6 +498,7 @@ Drawable::Drawable( const ThingTemplate *thingTemplate, DrawableStatusBits statu
 	m_drawableInfo.m_ghostObject = nullptr;
 
 	m_iconInfo = nullptr;								// lazily allocate!
+	m_objectWithoutStickyBomb = INVALID_ID;
 	m_selectionFlashEnvelope = nullptr;	// lazily allocate!
 	m_colorTintEnvelope = nullptr;				// lazily allocate!
 
@@ -522,6 +528,20 @@ Drawable::Drawable( const ThingTemplate *thingTemplate, DrawableStatusBits statu
 Drawable::~Drawable()
 {
 	Int i;
+
+#ifdef DIRTY_CONDITION_FLAGS
+	// GeneralsX @performance Claude 19/11/2026 Out of the list of drawables that may be dirty; a null keeps
+	// the places of the others, which the lock for iteration may be going through.
+	if (m_inDirtyModelList)
+	{
+		for (size_t d = 0; d < s_dirtyModelDrawables.size(); ++d)
+		{
+			if (s_dirtyModelDrawables[d] == this)
+				s_dirtyModelDrawables[d] = nullptr;
+		}
+		m_inDirtyModelList = false;
+	}
+#endif
 
 	if( m_constructDisplayString )
 		TheDisplayStringManager->freeDisplayString( m_constructDisplayString );
@@ -825,6 +845,8 @@ Bool Drawable::getCurrentWorldspaceClientBonePositions(const char* boneName, Mat
 //-------------------------------------------------------------------------------------------------
 void Drawable::setTerrainDecal(TerrainDecalType type)
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
 	if (m_terrainDecalType == type)
 		return;
 
@@ -852,6 +874,8 @@ void Drawable::setTerrainDecalSize(Real x, Real y)
 //-------------------------------------------------------------------------------------------------
 void Drawable::setTerrainDecalFadeTarget(Real target, Real rate)
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
 	if (m_decalOpacityFadeTarget != target)
 	{
 		m_decalOpacityFadeTarget = target;
@@ -881,6 +905,8 @@ void Drawable::setShadowsEnabled(Bool enable)
 /**frees all shadow resources used by this module - used by Options screen.*/
 void Drawable::releaseShadows()
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
 	for (DrawModule** dm = getDrawModules(); *dm; ++dm)
 	{
 		(*dm)->releaseShadows();
@@ -891,6 +917,8 @@ void Drawable::releaseShadows()
 /**create shadow resources if not already present. Used by Options screen.*/
 void Drawable::allocateShadows()
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
 	for (DrawModule** dm = getDrawModules(); *dm; ++dm)
 	{
 		(*dm)->allocateShadows();
@@ -921,6 +949,8 @@ void Drawable::setFullyObscuredByShroud(Bool fullyObscured)
 //-------------------------------------------------------------------------------------------------
 void Drawable::friend_setSelected()
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
 	if(isSelected() == false)
 	{
 		m_selected = TRUE;
@@ -935,6 +965,8 @@ void Drawable::friend_setSelected()
 //-------------------------------------------------------------------------------------------------
 void Drawable::friend_clearSelected()
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
 	if(isSelected())
 	{
 		m_selected = FALSE;
@@ -947,6 +979,8 @@ void Drawable::friend_clearSelected()
 // ------------------------------------------------------------------------------------------------
 void Drawable::colorFlash( const RGBColor* color, UnsignedInt decayFrames, UnsignedInt attackFrames, UnsignedInt sustainAtPeak )
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
 	if (m_colorTintEnvelope == nullptr)
 		m_colorTintEnvelope = newInstance(TintEnvelope);
 
@@ -967,6 +1001,8 @@ void Drawable::colorFlash( const RGBColor* color, UnsignedInt decayFrames, Unsig
 // ------------------------------------------------------------------------------------------------
 void Drawable::colorTint( const RGBColor* color )
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
 	if( color )
 	{
 		// set the color via color flash
@@ -1050,6 +1086,8 @@ const Vector3 * Drawable::getSelectionColor()	const
 //-------------------------------------------------------------------------------------------------
 void Drawable::fadeOut( UnsignedInt frames )		///< cloak object
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
 	setDrawableOpacity(1.0);
 	m_fadeMode = FADING_OUT;
 	m_timeToFade = frames;
@@ -1061,6 +1099,8 @@ void Drawable::fadeOut( UnsignedInt frames )		///< cloak object
 //-------------------------------------------------------------------------------------------------
 void Drawable::fadeIn( UnsignedInt frames )		///< decloak object
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
 	setDrawableOpacity(0.0);
 	m_fadeMode = FADING_IN;
 	m_timeToFade = frames;
@@ -1104,6 +1144,8 @@ void Drawable::reactToBodyDamageStateChange(BodyDamageType newState)
 //-------------------------------------------------------------------------------------------------
 void Drawable::setEffectiveOpacity( Real pulseFactor, Real explicitOpacity /* = -1.0f */)
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
 	if( explicitOpacity != -1.0f )
 	{
 		m_stealthOpacity = MIN( 1.0f, MAX( 0.0f, explicitOpacity ) );
@@ -1120,6 +1162,8 @@ void Drawable::setEffectiveOpacity( Real pulseFactor, Real explicitOpacity /* = 
 //-------------------------------------------------------------------------------------------------
 void Drawable::imitateStealthLook( Drawable& otherDraw )
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
   m_stealthOpacity = otherDraw.friend_getStealthOpacity();
   m_explicitOpacity = otherDraw.friend_getExplicitOpacity();
   m_effectiveStealthOpacity = otherDraw.friend_getEffectiveStealthOpacity();
@@ -1323,6 +1367,24 @@ void Drawable::updateDrawable(Real timeScale)
   		startAmbientSound();
     }
  	}
+
+	m_nothingToUpdate = findsNothingToUpdate();
+}
+
+//-------------------------------------------------------------------------------------------------
+// GeneralsX @performance Claude 19/11/2026 Whether updateDrawable() would do nothing, as it is now: each
+// of these is what one of its parts looks at. What sets any of them calls wakeUp().
+Bool Drawable::findsNothingToUpdate() const
+{
+	ClientUpdateModule const** cu = getClientUpdateModules();
+	return (cu == nullptr || *cu == nullptr) &&
+		m_fadeMode == FADING_NONE &&
+		m_terrainDecalType == TERRAIN_DECAL_NONE && m_decalOpacity == 0.0f &&
+		m_expirationDate == 0 &&
+		m_flashCount <= 0 &&
+		m_tintStatus == m_prevTintStatus && !BitIsSet( m_tintStatus, TINT_STATUS_IRRADIATED ) &&
+		m_colorTintEnvelope == nullptr && m_selectionFlashEnvelope == nullptr &&
+		m_ambientSound == nullptr;
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -1344,6 +1406,8 @@ void Drawable::onLevelStart()
 //-------------------------------------------------------------------------------------------------
 void Drawable::flashAsSelected( const RGBColor *color ) ///< drawable takes care of the details if you spec no color
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
 	if (m_selectionFlashEnvelope == nullptr)
 		m_selectionFlashEnvelope = newInstance(TintEnvelope);
 
@@ -2547,6 +2611,8 @@ void Drawable::validatePos() const
 //=============================================================================
 void Drawable::setStealthLook(StealthLookType look)
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
 	if (look != m_stealthLook)
 	{
 
@@ -2630,8 +2696,24 @@ void Drawable::setStealthLook(StealthLookType look)
 //-------------------------------------------------------------------------------------------------
 /** default draw is to just call the database defined draw */
 //-------------------------------------------------------------------------------------------------
+// GeneralsX @feature Claude 18/11/2026 Timers for the PS Vita frame profile: a drawable in the view as a
+// whole, and the part before its draw modules.
+DECLARE_PERF_TIMER(Drawable_draw)
+DECLARE_PERF_TIMER(Drawable_drawPrepare)
+
 void Drawable::draw()
 {
+	// GeneralsX @performance Claude 19/11/2026 A tree whose model the tree batch draws, and that stands as
+	// it stood on the last frame, has nothing to do here; what would change that calls wakeUp(). The
+	// view has about as many trees in it as everything else, and on the PS Vita going through this for
+	// each of them was well over a millisecond.
+	if (m_drawResting)
+		return;
+
+	USE_PERF_TIMER(Drawable_draw)
+	Matrix3D transformMtx;
+	{
+	USE_PERF_TIMER(Drawable_drawPrepare)
 	// GeneralsX @performance Claude 13/10/2026 Nearly no drawable has this set, and this runs for
 	// every drawable in the view on every frame: what is 0 is not written again, here and below.
 	if ( getObject() && getObject()->isEffectivelyDead() )
@@ -2668,7 +2750,7 @@ void Drawable::draw()
 #endif
 
 	// call the database defined draw action method
-	Matrix3D transformMtx = *getTransformMatrix();
+	transformMtx = *getTransformMatrix();
 	if (!isInstanceIdentity())
 	{
 #ifdef ALLOW_TEMPORARIES
@@ -2682,11 +2764,20 @@ void Drawable::draw()
 	{
 		applyPhysicsXform(&transformMtx);
 	}
+	}
 
+	// Resting: nothing fading or flashing, and every draw module drawn by a batch after it looked
+	// this time (see the start).
+	Bool resting = m_heatVisionOpacity == 0.0f && m_physicsXform == nullptr &&
+		m_colorTintEnvelope == nullptr && m_selectionFlashEnvelope == nullptr;
+	Bool anyDrawModule = FALSE;
 	for (DrawModule** dm = getDrawModules(); *dm; ++dm)
 	{
 		(*dm)->doDrawModule(&transformMtx);
+		anyDrawModule = TRUE;
+		resting = resting && (*dm)->isRestingInBatch();
 	}
+	m_drawResting = resting && anyDrawModule;
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -2766,14 +2857,39 @@ Bool Drawable::drawsAnyUIText()
 
 
 // ------------------------------------------------------------------------------------------------
+// GeneralsX @performance Claude 18/11/2026 drawIconUI() runs for every drawable in the view on every
+// frame, trees and bushes included, and working out where the health bar would be is a projection
+// onto the screen and a look at the object's geometry. An object that the user interface ignores
+// only gets what is drawn in drawIconUI() before that test: a health bar while it is selected or
+// under the mouse, an emoticon (an icon), a caption, or the percentage of its construction.
+// Without any of these nothing is drawn for it, and nothing is changed. What this drawable has
+// is looked at first, the object last: its memory is further away.
+Bool Drawable::drawsNoIconUI() const
+{
+	if (hasIconInfo() || m_captionDisplayString != nullptr || m_constructDisplayString != nullptr || isSelected())
+		return FALSE;
+
+	const Object *obj = getObject();
+	return obj != nullptr && obj->isKindOf( KINDOF_IGNORED_IN_GUI ) &&
+		!(TheInGameUI && TheInGameUI->getMousedOverDrawableID() == getID()) &&
+		!obj->getStatusBits().test( OBJECT_STATUS_UNDER_CONSTRUCTION );
+}
+
+// ------------------------------------------------------------------------------------------------
 /** This is called as part of the "post draw" phase when drawable a drawable.  It is there
 	* that we should overlay on the screen any 2D elements for purposes of user interface
 	* information (such as a heatlh bar, veterency levels, etc.) */
 // ------------------------------------------------------------------------------------------------
+// GeneralsX @feature Claude 18/11/2026 Timer for the PS Vita frame profile.
+DECLARE_PERF_TIMER(Drawable_drawIconUI)
 void Drawable::drawIconUI()
 {
+	USE_PERF_TIMER(Drawable_drawIconUI)
 	if( TheGameLogic->getDrawIconUI() && (TheScriptEngine->getFade()==ScriptEngine::FADE_NONE) )
 	{
+		if (drawsNoIconUI())
+			return;
+
 		IRegion2D healthBarRegionStorage;
 		const IRegion2D* healthBarRegion = nullptr;
 		if (computeHealthRegion(this, healthBarRegionStorage))
@@ -3474,8 +3590,19 @@ void Drawable::drawBombed(const IRegion2D* healthBarRegion)
 	//
 	// Bombed?
 	//
+	// GeneralsX @performance Claude 18/11/2026 This runs for every drawable in the view on every frame,
+	// and looking for the module asks each module of the object for its name, a call through
+	// memory that is in no cache for each. Only a sticky bomb has the module, and an object gets
+	// its modules when it is made (Object::Object()), so an object found without it is not
+	// asked again.
 	static NameKeyType key_StickyBombUpdate = NAMEKEY( "StickyBombUpdate" );
-	StickyBombUpdate *update = (StickyBombUpdate*)obj->findUpdateModule( key_StickyBombUpdate );
+	StickyBombUpdate *update = nullptr;
+	if( m_objectWithoutStickyBomb != obj->getID() )
+	{
+		update = (StickyBombUpdate*)obj->findUpdateModule( key_StickyBombUpdate );
+		if( update == nullptr )
+			m_objectWithoutStickyBomb = obj->getID();
+	}
 	if( update )
 	{
 		//This case is tricky. The object that is bombed doesn't know it... but the bomb itself does.
@@ -4017,8 +4144,11 @@ void Drawable::clearAndSetModelConditionFlags(const ModelConditionFlags& clr, co
 	if (m_conditionState == oldFlags)
 		return;
 
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
+
 #ifdef DIRTY_CONDITION_FLAGS
-	m_isModelDirty = true;
+	markModelDirty();
 #else
 	replaceModelConditionStateInDrawable();
 #endif
@@ -4037,6 +4167,9 @@ void Drawable::replaceModelConditionFlags( const ModelConditionFlags &flags, Boo
 	if( forceReplace == FALSE && m_conditionState == flags )
 		return;
 
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
+
 	m_conditionState = flags;
 #ifdef DIRTY_CONDITION_FLAGS
 	// when forcing a replace we won't use dirty flags, we will immediately do an update now
@@ -4046,7 +4179,7 @@ void Drawable::replaceModelConditionFlags( const ModelConditionFlags &flags, Boo
 	}
 	else
 	{
-		m_isModelDirty = true;
+		markModelDirty();
 	}
 #else
 	replaceModelConditionStateInDrawable();
@@ -4056,6 +4189,8 @@ void Drawable::replaceModelConditionFlags( const ModelConditionFlags &flags, Boo
 //-------------------------------------------------------------------------------------------------
 void Drawable::replaceModelConditionStateInDrawable()
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
 	// TheSuperHackers @info Set not dirty early to avoid recursive calls from within getDrawModules().
 	m_isModelDirty = false;
 
@@ -4078,6 +4213,8 @@ void Drawable::replaceModelConditionStateInDrawable()
 //-------------------------------------------------------------------------------------------------
 void Drawable::setIndicatorColor(Color color)
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
 	for (DrawModule** dm = getDrawModules(); *dm; ++dm)
 	{
 		ObjectDrawInterface* di = (*dm)->getObjectDrawInterface();
@@ -4135,6 +4272,8 @@ DrawableID Drawable::getID() const
 //-------------------------------------------------------------------------------------------------
 void Drawable::friend_bindToObject( Object *obj ) ///< bind this drawable to an object ID
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
 	m_object = obj;
 	if (getObject())
 	{
@@ -4203,6 +4342,8 @@ void Drawable::setPosition(const Coord3D *pos)
 //-------------------------------------------------------------------------------------------------
 void Drawable::reactToTransformChange(const Matrix3D* oldMtx, const Coord3D* oldPos, Real oldAngle)
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
 	for (DrawModule** dm = getDrawModules(); *dm; ++dm)
 	{
 		(*dm)->reactToTransformChange(oldMtx, oldPos, oldAngle);
@@ -4262,6 +4403,8 @@ Int Drawable::getBarrelCount(WeaponSlotType wslot) const
 //-------------------------------------------------------------------------------------------------
 void Drawable::setInstanceMatrix( const Matrix3D *instance )
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
 	if (instance)
 	{
 		m_instance = *instance;
@@ -4390,6 +4533,8 @@ void Drawable::mangleCustomAudioName( DynamicAudioEventInfo * audioToMangle ) co
  */
 void Drawable::setCustomSoundAmbientOff()
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
   clearCustomSoundAmbient( false );
 
   m_customSoundAmbientInfo = getNoSoundMarker();
@@ -4401,6 +4546,8 @@ void Drawable::setCustomSoundAmbientOff()
  */
 void Drawable::setCustomSoundAmbientInfo( DynamicAudioEventInfo * customAmbientInfo )
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
   clearCustomSoundAmbient( false );
 
   // This is mostly to make sure no one delete's the no sound marker, causing it to be
@@ -4419,6 +4566,8 @@ void Drawable::setCustomSoundAmbientInfo( DynamicAudioEventInfo * customAmbientI
  */
 void Drawable::clearCustomSoundAmbient( bool restartSound )
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
   if ( m_ambientSound )
   {
     // Make sure sound doesn't keep a reference to the deleted pointer
@@ -4442,6 +4591,8 @@ void Drawable::clearCustomSoundAmbient( bool restartSound )
 //-------------------------------------------------------------------------------------------------
 void Drawable::startAmbientSound(BodyDamageType dt, TimeOfDay tod, Bool onlyIfPermanent)
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
 	stopAmbientSound();
 
   Bool trySound = FALSE;
@@ -4532,6 +4683,8 @@ void Drawable::startAmbientSound(BodyDamageType dt, TimeOfDay tod, Bool onlyIfPe
 //-------------------------------------------------------------------------------------------------
 void Drawable::startAmbientSound( Bool onlyIfPermanent )
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
   // Must go through enableAmbientSound() if sound is disabled
   if ( !m_ambientSoundEnabled || !m_ambientSoundEnabledFromScript )
     return;
@@ -4551,6 +4704,8 @@ void Drawable::startAmbientSound( Bool onlyIfPermanent )
 //-------------------------------------------------------------------------------------------------
 void	Drawable::stopAmbientSound()
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
 	if (m_ambientSound)
   {
 		TheAudio->removeAudioEvent(m_ambientSound->getPlayingHandle());
@@ -4561,6 +4716,8 @@ void	Drawable::stopAmbientSound()
 // Enable and disable ambient sound from the game logic
 void Drawable::enableAmbientSound( Bool enable )
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
 	if( m_ambientSoundEnabled == enable )
 	{
 		return;
@@ -4584,6 +4741,8 @@ void Drawable::enableAmbientSound( Bool enable )
 // Enable and disable sound because the map designer wants us too
 void Drawable::enableAmbientSoundFromScript( Bool enable )
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
   // Note: deliberately skipping if( m_ambientSoundEnabledFromScript == enable ) check here
   // Allow ENABLE_OBJECT_SOUND to trigger one-shot attached sound multiple times
 
@@ -4633,6 +4792,8 @@ void Drawable::removeFromList(Drawable **pListHead)
 //-------------------------------------------------------------------------------------------------
 void Drawable::updateHiddenStatus()
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
 	Bool hidden = m_hidden || m_hiddenByStealth;
 	if( hidden )
 		TheInGameUI->deselectDrawable( this );
@@ -4651,6 +4812,8 @@ void Drawable::updateHiddenStatus()
 //-------------------------------------------------------------------------------------------------
 void Drawable::setDrawableHidden( Bool hidden )
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
 	if (hidden != m_hidden)
 	{
 		m_hidden = hidden;
@@ -4906,6 +5069,8 @@ void Drawable::xferDrawableModules( Xfer *xfer )
 // ------------------------------------------------------------------------------------------------
 void Drawable::xfer( Xfer *xfer )
 {
+	// GeneralsX @performance Claude 19/11/2026 Gives updateDrawable() and draw() something to do (wakeUp()).
+	wakeUp();
 
 	// version
 #if RETAIL_COMPATIBLE_XFER_SAVE && RTS_GENERALS
@@ -5318,7 +5483,7 @@ void Drawable::xfer( Xfer *xfer )
 	if( xfer->getXferMode() == XFER_SAVE )
 		DEBUG_ASSERTCRASH( m_isModelDirty == FALSE, ("Drawable::xfer - m_isModelDirty is not FALSE!") );
 	else
-		m_isModelDirty = TRUE;
+		markModelDirty();
 #endif
 
   if( xfer->getXferMode() == XFER_LOAD )
@@ -5470,16 +5635,48 @@ const Locomotor* Drawable::getLocomotor() const
 {
 	if (s_modelLockCount == 0)
 	{
-		if (TheGameClient)	// WB has no GameClient!
+		// GeneralsX @performance Claude 19/11/2026 Only the drawables in s_dirtyModelDrawables can be dirty
+		// (markModelDirty()); the scene locks once per frame, and going through all 1900 drawables of a
+		// map for the few that are took most of a millisecond on the PS Vita.
+		const size_t count = s_dirtyModelDrawables.size();
+		for (size_t i = 0; i < count; ++i)
 		{
-			for (Drawable* d = TheGameClient->firstDrawable(); d != nullptr; d = d->getNextDrawable())
+			Drawable *d = s_dirtyModelDrawables[i];
+			if (d != nullptr && d->m_isModelDirty)
 			{
 				// this will force us to update stuff.
 				d->getDrawModules();
 			}
 		}
+
+		// What is still dirty (marked again meanwhile) stays in the list for the next lock.
+		size_t kept = 0;
+		for (size_t i = 0; i < s_dirtyModelDrawables.size(); ++i)
+		{
+			Drawable *d = s_dirtyModelDrawables[i];
+			if (d == nullptr)
+				continue;
+			if (d->m_isModelDirty)
+				s_dirtyModelDrawables[kept++] = d;
+			else
+				d->m_inDirtyModelList = false;
+		}
+		s_dirtyModelDrawables.resize(kept);
 	}
 	++s_modelLockCount;
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Marks the model to be replaced before it is next drawn or its draw modules are asked for, and
+	* notes the drawable for the next lock for iteration. */
+void Drawable::markModelDirty()
+{
+	m_isModelDirty = true;
+	if (!m_inDirtyModelList)
+	{
+		m_inDirtyModelList = true;
+		s_dirtyModelDrawables.push_back(this);
+	}
 }
 #endif
 

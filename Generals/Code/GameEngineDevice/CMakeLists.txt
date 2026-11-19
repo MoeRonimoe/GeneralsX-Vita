@@ -54,6 +54,7 @@ set(GAMEENGINEDEVICE_SRC
 #    Include/W3DDevice/GameClient/W3DShaderManager.h
     Include/W3DDevice/GameClient/W3DShadow.h
     Include/W3DDevice/GameClient/W3DShroud.h
+    Include/W3DDevice/GameClient/W3DTreeBatchRenderer.h
     Include/W3DDevice/GameClient/W3DStatusCircle.h
 #    Include/W3DDevice/GameClient/W3DTerrainTracks.h
 #    Include/W3DDevice/GameClient/W3DTerrainVisual.h
@@ -151,6 +152,7 @@ set(GAMEENGINEDEVICE_SRC
 #    Source/W3DDevice/GameClient/W3DShaderManager.cpp
     Source/W3DDevice/GameClient/W3DShroud.cpp
     Source/W3DDevice/GameClient/W3DStatusCircle.cpp
+    Source/W3DDevice/GameClient/W3DTreeBatchRenderer.cpp
 #    Source/W3DDevice/GameClient/W3DTerrainTracks.cpp
 #    Source/W3DDevice/GameClient/W3DTerrainVisual.cpp
 #    Source/W3DDevice/GameClient/W3DTreeBuffer.cpp

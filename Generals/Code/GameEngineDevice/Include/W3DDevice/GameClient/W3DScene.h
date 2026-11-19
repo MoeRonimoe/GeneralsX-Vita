@@ -56,6 +56,8 @@ class W3DMaskMaterialPassClass;
 //-----------------------------------------------------------------------------
 /** Scene management for 3D RTS game */
 //-----------------------------------------------------------------------------
+class W3DTreeBatchRenderer;
+
 class RTS3DScene : public SimpleSceneClass, public SubsystemInterface
 {
 
@@ -100,6 +102,8 @@ public:
 
 protected:
 	void renderOneObject(RenderInfoClass &rinfo, RenderObjClass *robj, Int localPlayerIndex);
+	Bool isLitByPositionalLight(const SphereClass &sphere);
+	LightEnvironmentClass *sharedLightEnvironment(RenderInfoClass &rinfo, LightClass **lights, const Vector3 &ambient);
 	void updateFixedLightEnvironments(RenderInfoClass & rinfo);
 	void flushTranslucentObjects(RenderInfoClass & rinfo);
 	void flushOccludedObjects(RenderInfoClass & rinfo);
@@ -117,6 +121,18 @@ protected:
 	Int m_numGlobalLights;			///<number of global lights
 	LightEnvironmentClass	m_defaultLightEnv;		///<default light environment applied to objects without custom/dynamic lighting.
 	LightEnvironmentClass	m_foggedLightEnv;		///<default light environment applied to objects without custom/dynamic lighting.
+	// GeneralsX @performance Claude 18/11/2026 The environment of the objects that only directional lights
+	// reach, made once per pass over the scene ([1] with the infantry's lights), see sharedLightEnvironment().
+	LightEnvironmentClass	*m_sharedLightEnv[2];
+	UnsignedInt						m_sharedLightEnvPass;	///< the pass they were made in
+	UnsignedInt						m_sharedLightEnvFrame;	///< and WW3D's frame
+	UnsignedInt						m_renderPass;			///< counts the passes over the scene
+	// GeneralsX @performance Claude 19/11/2026 Draws the intact trees that stand still (W3DTreeBatch.h);
+	// null where every tree is drawn on its own.
+	W3DTreeBatchRenderer			*m_treeBatch;
+	Bool									m_treeBatchPrimed;		///< the trees of the running mission have been put into it
+	UnsignedInt						m_treeBatchPrimeFrame;	///< at this step of the logic
+	void primeTreeBatch();
 
 	W3DShroudMaterialPassClass	*m_shroudMaterialPass;	///< Custom render pass which applies shrouds to objects
 	W3DMaskMaterialPassClass *m_maskMaterialPass;			///< Custom render pass applied to entire scene used to mask out pixels.

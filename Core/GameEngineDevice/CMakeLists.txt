@@ -71,6 +71,7 @@ set(GAMEENGINEDEVICE_SRC
     Include/W3DDevice/GameClient/W3DTerrainBackground.h
     Include/W3DDevice/GameClient/W3DTerrainTracks.h
     Include/W3DDevice/GameClient/W3DTerrainVisual.h
+    Include/W3DDevice/GameClient/W3DTreeBatch.h
     Include/W3DDevice/GameClient/W3DTreeBuffer.h
     Include/W3DDevice/GameClient/W3DVideoBuffer.h
     Include/W3DDevice/GameClient/W3DView.h

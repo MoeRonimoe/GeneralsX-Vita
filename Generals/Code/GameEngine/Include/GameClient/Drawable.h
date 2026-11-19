@@ -311,11 +311,19 @@ public:
 	void friend_bindToObject( Object *obj ); ///< bind this drawable to an object ID. for use ONLY by GameLogic!
 	void setIndicatorColor(Color color);
 
-	void setTintStatus( TintStatus statusBits ) { BitSet( m_tintStatus, statusBits ); };
-	void clearTintStatus( TintStatus statusBits ) { BitClear( m_tintStatus, statusBits ); };
+	void setTintStatus( TintStatus statusBits ) { BitSet( m_tintStatus, statusBits ); wakeUp(); };
+	void clearTintStatus( TintStatus statusBits ) { BitClear( m_tintStatus, statusBits ); wakeUp(); };
 	Bool testTintStatus( TintStatus statusBits ) const { return BitIsSet( m_tintStatus, statusBits ); };
 	TintEnvelope *getColorTintEnvelope() { return m_colorTintEnvelope; }
-	void setColorTintEnvelope( TintEnvelope &source ) { if (m_colorTintEnvelope) *m_colorTintEnvelope = source; }
+	void setColorTintEnvelope( TintEnvelope &source ) { if (m_colorTintEnvelope) *m_colorTintEnvelope = source; wakeUp(); }
+
+	// GeneralsX @performance Claude 19/11/2026 Whether updateDrawable() can be left out: it found nothing
+	// to do on its last call (no client update modules, no fading, no decal, no expiry, no flashing,
+	// no tint, no ambient sound), and nothing that would give it something to do has been set since.
+	// Most drawables of a map are trees and other things that stand there, and on the PS Vita the
+	// call for each of them on every frame was a millisecond or two.
+	Bool hasNothingToUpdate() const { return m_nothingToUpdate; }
+
 
   void imitateStealthLook( Drawable& otherDraw );
 
@@ -419,7 +427,7 @@ public:
 	Bool isInstanceIdentity() const { return m_instanceIsIdentity; }
 
 	Real getInstanceScale() const { return m_instanceScale; }		///< get scale that will be applied to instance matrix
-	void setInstanceScale(Real value) { m_instanceScale = value;}	///< set scale that will be applied to instance matrix before rendering.
+	void setInstanceScale(Real value) { m_instanceScale = value; wakeUp(); }	///< set scale that will be applied to instance matrix before rendering.
 
 	const Matrix3D *getTransformMatrix() const;	///< return the world transform
 
@@ -427,6 +435,10 @@ public:
 	void updateDrawable(Real timeScale);														///< update the drawable
 
 	void drawIconUI();													///< draw "icon"(s) needed on drawable (health bars, veterency, etc)
+	// GeneralsX @performance Claude 19/11/2026 Whether drawIconUI() has nothing to draw for this drawable
+	// whatever the shroud: an object the user interface ignores, with nothing on it that is drawn
+	// for such an object either. Most drawables in a view are trees.
+	Bool drawsNoIconUI() const;
 
 	void startAmbientSound( Bool onlyIfPermanent = false );
 	void stopAmbientSound();
@@ -527,7 +539,7 @@ public:
 #endif
 
 	UnsignedInt getExpirationDate() const { return m_expirationDate; }
-	void setExpirationDate(UnsignedInt frame) { m_expirationDate = frame; }
+	void setExpirationDate(UnsignedInt frame) { m_expirationDate = frame; wakeUp(); }
 
 	//
 	// *ONLY* the InGameUI should do the actual drawable selection and de-selection
@@ -543,7 +555,7 @@ public:
 
 	TerrainDecalType getTerrainDecalType() const { return m_terrainDecalType; }
 
-	void setDrawableOpacity( Real value ) { m_explicitOpacity = value; }	///< set alpha/opacity value used to override defaults when drawing.
+	void setDrawableOpacity( Real value ) { m_explicitOpacity = value; wakeUp(); }	///< set alpha/opacity value used to override defaults when drawing.
 
 	// note that this is not the 'get' inverse of setDrawableOpacity, since stealthing can also affect the effective opacity!
 	Real getEffectiveOpacity() const { return m_explicitOpacity * m_effectiveStealthOpacity; }		///< get alpha/opacity value used to override defaults when drawing.
@@ -551,7 +563,7 @@ public:
 
 	// this is for the heatvision effect which operates completely independently of the stealth opacity effects. Draw() does the fading every frame.
 	Real getHeatVisionOpacity() const { return m_heatVisionOpacity; }		///< get alpha/opacity value used to render add'l heatvision rendering pass.
-	void setHeatVisionOpacity( Real op ) { m_heatVisionOpacity = op; }; ///< set alpha/opacity value used to render add'l heatvision rendering pass.
+	void setHeatVisionOpacity( Real op ) { m_heatVisionOpacity = op; wakeUp(); }; ///< set alpha/opacity value used to render add'l heatvision rendering pass.
 
 	// both of these assume that you are starting at one extreme 100% or 0% opacity and are trying to go to the other!! -- amit
 	void fadeOut( UnsignedInt frames );		///< fade object out...how gradually this is done is determined by frames
@@ -565,7 +577,7 @@ public:
 
 	// flash drawable methods ---------------------------------------------------------
   Int getFlashCount() { return m_flashCount; }
-	void setFlashCount( Int count ) { m_flashCount = count; }
+	void setFlashCount( Int count ) { m_flashCount = count; wakeUp(); }
 	void setFlashColor( Color color ) { m_flashColor = color; }
   void saturateRGB(RGBColor& color, Real factor);// not strictly for flash color, but it is the only practical use for this
 	//---------------------------------------------------------------------------------
@@ -677,6 +689,22 @@ private:
 
 	const Locomotor* getLocomotor() const;
 
+	/// Something updateDrawable() or draw() looks at has been set; see hasNothingToUpdate() and
+	/// m_drawResting.
+	void wakeUp() { m_nothingToUpdate = FALSE; m_drawResting = FALSE; }
+	Bool findsNothingToUpdate() const;
+
+	// GeneralsX @performance Claude 19/11/2026 What the passes over all drawables read of every one of
+	// them on every frame (GameClient::update(), GameClient::iterateDrawablesInRegion()), next to each
+	// other and to the position the Thing ends with. On the PS Vita such a pass over the 1900
+	// drawables of a map costs mostly in the lines of memory it reads of each.
+	Drawable *m_nextDrawable;
+	Drawable *m_prevDrawable;		///< list links
+	Object *m_object;						///< object (if any) that this drawable represents
+	Bool m_shroudStatusStale;		///<m_drawableFullyObscuredByShroud has to be worked out again, see markShroudStatusStale()
+	Bool m_nothingToUpdate;			///< updateDrawable() found nothing to do, and nothing has been asked of it since; see wakeUp()
+	Bool m_drawResting;					///< draw() found every draw module drawn by a batch, unchanged (DrawModule::isRestingInBatch()), and nothing has changed since; see wakeUp()
+
 	// note, these are lazily allocated!
 	TintEnvelope*		m_selectionFlashEnvelope;	///< used for selection flash, works WITH m_colorTintEnvelope
 	TintEnvelope*		m_colorTintEnvelope;			///< house color flashing, etc... works WITH m_selectionFlashEnvelope
@@ -696,11 +724,7 @@ private:
 	Real m_decalOpacityFadeRate;
 	Real m_decalOpacity;
 
-	Object *m_object;						///< object (if any) that this drawable represents
-
 	DrawableID m_id;						///< this drawable's unique ID
-	Drawable *m_nextDrawable;
-	Drawable *m_prevDrawable;		///< list links
 
   DynamicAudioEventInfo *m_customSoundAmbientInfo; ///< If not nullptr, info about the ambient sound to attach to this object
 
@@ -746,6 +770,9 @@ private:
 
 	UnsignedInt					m_expirationDate;		///< if nonzero, Drawable should destroy itself at this frame
 	DrawableIconInfo*		m_iconInfo;					///< lazily allocated!
+	// GeneralsX @performance Claude 18/11/2026 The object drawBombed() has found to have no sticky bomb
+	// module, see there.
+	ObjectID						m_objectWithoutStickyBomb;
 
 	Real m_heatVisionOpacity;			///< drawable draws for everybody in the heatvision special effect
 
@@ -755,7 +782,6 @@ private:
 	Bool m_hiddenByStealth;			///< drawable is hidden due to stealth
 	Bool m_instanceIsIdentity;	///< If true, instance matrix can be skipped
 	Bool m_drawableFullyObscuredByShroud;	///<drawable is hidden by shroud/fog
-	Bool m_shroudStatusStale;							///<m_drawableFullyObscuredByShroud has to be worked out again, see markShroudStatusStale()
   Bool m_ambientSoundEnabled;
   Bool m_ambientSoundEnabledFromScript;
 
@@ -763,6 +789,7 @@ private:
 
 #ifdef DIRTY_CONDITION_FLAGS
 	Bool m_isModelDirty;				///< if true, must call replaceModelConditionState() before drawing or accessing drawmodule info
+	Bool m_inDirtyModelList;		///< in s_dirtyModelDrawables, see markModelDirty()
 #endif
 
 	//*******************************************
@@ -811,6 +838,11 @@ private:
 
 #ifdef DIRTY_CONDITION_FLAGS
 	static Int							s_modelLockCount;
+	// GeneralsX @performance Claude 19/11/2026 The drawables that may have been marked dirty since the last
+	// lock for iteration, so that the lock looks at these instead of at every drawable of the map. A
+	// drawable that is destroyed meanwhile leaves a null in its place.
+	static std::vector<Drawable *>	s_dirtyModelDrawables;
+	void markModelDirty();
 #endif
 
 

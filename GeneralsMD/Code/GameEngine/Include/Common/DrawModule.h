@@ -86,6 +86,9 @@ public:
 	virtual void setFullyObscuredByShroud(Bool fullyObscured) = 0;
 
 	virtual Bool isVisible() const { return true; }	///< for limiting tree sway, etc to visible objects
+	// GeneralsX @performance Claude 19/11/2026 Whether doDrawModule() has nothing to do until something about
+	// the drawable changes: a batch draws the model (W3DTreeBatch.h), as it stood when this last looked.
+	virtual Bool isRestingInBatch() const { return false; }
 
 	virtual void reactToTransformChange(const Matrix3D* oldMtx, const Coord3D* oldPos, Real oldAngle) = 0;
 	virtual void reactToGeometryChange() = 0;

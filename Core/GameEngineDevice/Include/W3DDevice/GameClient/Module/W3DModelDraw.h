@@ -352,6 +352,13 @@ public:
 
 	/// the draw method
 	virtual void doDrawModule(const Matrix3D* transformMtx) override;
+	// GeneralsX @performance Claude 19/11/2026 Puts an intact tree into the tree batch where its drawable
+	// stands, without drawing it (W3DTreeBatch.h).
+	void enterTreeBatchWhereStanding();
+	/// Why the model is not in the tree batch, for the log; null if it is.
+	const char *treeBatchRefusal() const;
+	/// Whether the tree batch draws the model, which is then not in the scene.
+	Bool isInTreeBatch() const { return m_inTreeBatch; }
 	virtual void setShadowsEnabled(Bool enable) override;
 	virtual void releaseShadows() override;	///< frees all shadow resources used by this module - used by Options screen.
 	virtual void allocateShadows() override; ///< create shadow resources if not already present. Used by Options screen.
@@ -365,6 +372,9 @@ public:
 	virtual void setTerrainDecal(TerrainDecalType type) override;
 
 	virtual Bool isVisible() const override;
+	// GeneralsX @performance Claude 19/11/2026 In the tree batch after doDrawModule() looked: it left the
+	// batch there if anything had changed.
+	virtual Bool isRestingInBatch() const override { return m_inTreeBatch; }
 	virtual void reactToTransformChange(const Matrix3D* oldMtx, const Coord3D* oldPos, Real oldAngle) override;
 	virtual void reactToGeometryChange() override { }
 
@@ -507,6 +517,10 @@ private:
 	Bool													m_hideHeadlights;
 	Bool													m_pauseAnimation;
 	Int														m_animationMode;
+	// GeneralsX @performance Claude 19/11/2026 Whether the model is drawn by the tree batch
+	// (W3DTreeBatch.h) instead of being in the scene, and where it stood when it went in.
+	Bool													m_inTreeBatch;
+	Matrix3D											m_treeBatchTransform;
 
 	void adjustAnimation(const ModelConditionInfo* prevState, Real prevAnimFraction);
 	Real getCurrentAnimFraction() const;
@@ -515,6 +529,10 @@ private:
 	void rebuildWeaponRecoilInfo(const ModelConditionInfo* state);
 	void doHideShowProjectileObjects( UnsignedInt showCount, UnsignedInt maxCount, WeaponSlotType slot );///< Means effectively, show m of n.
 	void nukeCurrentRender(Matrix3D* xform);
+	const char *treeBatchObstacle() const;
+	Bool canEnterTreeBatch() const { return treeBatchObstacle() == nullptr; }
+	Bool treeBatchStillFits() const;
+	void leaveTreeBatch();
 	void doStartOrStopParticleSys();
 	void adjustAnimSpeedToMovementSpeed();
 	static void hideAllMuzzleFlashes(const ModelConditionInfo* state, RenderObjClass* renderObject);

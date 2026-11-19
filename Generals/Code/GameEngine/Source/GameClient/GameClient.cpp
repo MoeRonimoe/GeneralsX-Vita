@@ -502,6 +502,7 @@ DECLARE_PERF_TIMER(GameClient_drawables)
 DECLARE_PERF_TIMER(GameClient_terrainVisual)
 DECLARE_PERF_TIMER(GameClient_displayUpdate)
 DECLARE_PERF_TIMER(GameClient_particles)
+DECLARE_PERF_TIMER(GameClient_ghostOrphans)
 void GameClient::update()
 {
 	USE_PERF_TIMER(GameClient_update)
@@ -596,6 +597,8 @@ void GameClient::update()
 		if (true)
 #endif
 		{
+			// GeneralsX @feature Claude 18/11/2026 Timer for the PS Vita frame profile.
+			USE_PERF_TIMER(GameClient_ghostOrphans)
 			if (TheGhostObjectManager->trackAllPlayers())
 			{
 				//Find indices of all active players
@@ -640,8 +643,9 @@ void GameClient::update()
 				//so need to refresh their status.  We can't rely on external calls
 				//to getShroudStatus() because they are only made for visible on-screen
 				//objects.
-				Object *object=draw->getObject();
-				if (object && (draw->isShroudStatusStale() || shroudStatusPlayerChanged))
+				// GeneralsX @performance Claude 19/11/2026 The flag first: it is read next to the list link.
+				Object *object = (draw->isShroudStatusStale() || shroudStatusPlayerChanged) ? draw->getObject() : nullptr;
+				if (object)
 				{
 					// What marks the drawable again while this is worked out is kept.
 					draw->friend_clearShroudStatusStale();
@@ -689,7 +693,10 @@ void GameClient::update()
 						draw->friend_clearShroudStatusStale();
 				}
 			}
-			draw->updateDrawable(timeScale);
+			// GeneralsX @performance Claude 19/11/2026 Most drawables of a map have nothing to update on
+			// most frames (Drawable::hasNothingToUpdate()).
+			if (!draw->hasNothingToUpdate())
+				draw->updateDrawable(timeScale);
 			draw = next;
 		}
 	}

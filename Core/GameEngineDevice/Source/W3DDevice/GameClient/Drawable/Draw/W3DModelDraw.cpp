@@ -41,12 +41,14 @@
 #include "Common/GameState.h"
 #include "Common/GlobalData.h"
 #include "Common/PerfTimer.h"
+#include "W3DDevice/GameClient/W3DTreeBatch.h"
 #include "Common/RandomValue.h"
 #include "Common/ThingTemplate.h"
 #include "Common/GameLOD.h"
 #include "Common/Xfer.h"
 #include "GameClient/Drawable.h"
 #include "GameClient/FXList.h"
+#include "GameClient/Module/SwayClientUpdate.h"
 #include "GameClient/Shadow.h"
 #include "GameLogic/GameLogic.h"		// for real-time frame
 #include "GameLogic/Object.h"
@@ -1731,6 +1733,7 @@ W3DModelDraw::W3DModelDraw(Thing *thing, const ModuleData* moduleData) : DrawMod
 	m_curState = nullptr;
 	m_hexColor = 0;
 	m_renderObject = nullptr;
+	m_inTreeBatch = FALSE;
 	m_shadow = nullptr;
 	m_shadowEnabled = TRUE;
 	m_terrainDecal = nullptr;
@@ -1805,6 +1808,134 @@ W3DModelDraw::~W3DModelDraw()
 }
 
 //-------------------------------------------------------------------------------------------------
+// GeneralsX @performance Claude 19/11/2026 The renderer of the trees that stand still, if this game has
+// one (W3DTreeBatch.h).
+W3DTreeBatchInterface *TheW3DTreeBatch = nullptr;
+
+//-------------------------------------------------------------------------------------------------
+/** Why the model cannot go into the tree batch now, or null if it can: it has to be that of an
+	* intact tree or shrub that stands still, with nothing attached to it, and in the scene; the batch
+	* draws nothing but the model. */
+const char *W3DModelDraw::treeBatchObstacle() const
+{
+	const Drawable *draw = getDrawable();
+	if (!draw->isKindOf(KINDOF_SHRUBBERY))
+		return "not shrubbery";
+	if (m_renderObject == nullptr || W3DDisplay::m_3DScene == nullptr)
+		return "no model";
+	if (m_shadow != nullptr)
+		return "shadow";
+	if (m_terrainDecal != nullptr)
+		return "terrain decal";
+	if (m_trackRenderObject != nullptr)
+		return "tracks";
+	if (!m_particleSystemIDs.empty() || m_needRecalcBoneParticleSystems)
+		return "particle systems";
+
+	// No condition but those the map gives every object (night, snow): not burning, burned or fallen.
+	ModelConditionFlags flags = draw->getModelConditionFlags();
+	flags.set(MODELCONDITION_NIGHT, 0);
+	flags.set(MODELCONDITION_SNOW, 0);
+	if (flags.any())
+		return "condition";
+
+	if (draw->isDrawableEffectivelyHidden() || m_renderObject->Is_Hidden())
+		return "hidden";
+	if (m_renderObject->Peek_Scene() == nullptr)
+		return "not in the scene";
+	if (!treeBatchStillFits())
+		return "tinted or translucent";
+
+	// A tree that sways in the wind (the tree sway of the higher levels of detail) moves on every
+	// frame it is seen; it would leave the batch again at once.
+	static const NameKeyType nameKeySwayUpdate = NAMEKEY("SwayClientUpdate");
+	for (ClientUpdateModule const **cu = draw->getClientUpdateModules(); cu != nullptr && *cu != nullptr; ++cu)
+	{
+		if ((*cu)->getModuleNameKey() == nameKeySwayUpdate && static_cast<const SwayClientUpdate *>(*cu)->isSwaying())
+			return "swaying";
+	}
+	return nullptr;
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Whether the model looks as the batch draws it: nothing that the scene would change about how it
+	* is lit or blended (RTS3DScene::renderOneObject()). */
+Bool W3DModelDraw::treeBatchStillFits() const
+{
+	const Drawable *draw = getDrawable();
+#if RTS_GENERALS
+	const Bool extraPass = draw->getHeatVisionOpacity() != 0.0f;
+#else
+	const Bool extraPass = draw->getSecondMaterialPassOpacity() != 0.0f;
+#endif
+	return draw->getEffectiveOpacity() == 1.0f && draw->getTintColor() == nullptr &&
+		draw->getSelectionColor() == nullptr && !extraPass;
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Puts an intact tree into the batch where its drawable stands. The scene does that for all trees
+	* when a mission begins, also for those in the shroud, which are not drawn: a chunk of the batch
+	* that gets another tree makes its buffers anew, and doing that bit by bit while the camera moves
+	* waited for the render thread on the frames where it had the most to do. What is done here is
+	* what drawing it does first (Drawable::draw() and doDrawModule()). */
+void W3DModelDraw::enterTreeBatchWhereStanding()
+{
+	if (m_inTreeBatch || TheW3DTreeBatch == nullptr || m_renderObject == nullptr)
+		return;
+
+	const Drawable *draw = getDrawable();
+	if (!draw->isKindOf(KINDOF_SHRUBBERY))
+		return;
+
+	Matrix3D mtx = *draw->getTransformMatrix();
+	if (!draw->isInstanceIdentity())
+		mtx.postMul(*draw->getInstanceMatrix());
+	if (draw->getInstanceScale() != 1.0f)
+	{
+		mtx.Scale(draw->getInstanceScale());
+		m_renderObject->Set_ObjectScale(draw->getInstanceScale());
+	}
+	adjustTransformMtx(mtx);
+	if (!(mtx == m_renderObject->Get_Transform()))
+		m_renderObject->Set_Transform(mtx);
+
+	// The particle systems of the state, which an intact tree has none of.
+	recalcBonesForClientParticleSystems();
+
+	if (canEnterTreeBatch() && TheW3DTreeBatch->addTree(this, m_renderObject, !m_fullyObscuredByShroud))
+	{
+		W3DDisplay::m_3DScene->Remove_Render_Object(m_renderObject);
+		m_inTreeBatch = TRUE;
+		m_treeBatchTransform = mtx;
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
+const char *W3DModelDraw::treeBatchRefusal() const
+{
+	if (m_inTreeBatch)
+		return nullptr;
+	if (TheW3DTreeBatch == nullptr)
+		return "no batch";
+	const char *obstacle = treeBatchObstacle();
+	return obstacle != nullptr ? obstacle : TheW3DTreeBatch->lastRefusal();
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Takes the model out of the tree batch and puts it back into the scene. */
+void W3DModelDraw::leaveTreeBatch()
+{
+	if (!m_inTreeBatch)
+		return;
+
+	m_inTreeBatch = FALSE;
+	if (TheW3DTreeBatch != nullptr)
+		TheW3DTreeBatch->removeTree(this);
+	if (m_renderObject != nullptr && W3DDisplay::m_3DScene != nullptr)
+		W3DDisplay::m_3DScene->Add_Render_Object(m_renderObject);
+}
+
+//-------------------------------------------------------------------------------------------------
 void W3DModelDraw::doStartOrStopParticleSys()
 {
 	Bool hidden = getDrawable()->isDrawableEffectivelyHidden() || m_fullyObscuredByShroud;
@@ -1827,6 +1958,10 @@ void W3DModelDraw::doStartOrStopParticleSys()
 //-------------------------------------------------------------------------------------------------
 void W3DModelDraw::setHidden(Bool hidden)
 {
+	// GeneralsX @performance Claude 19/11/2026 A hidden tree is hidden in the scene.
+	if (hidden)
+		leaveTreeBatch();
+
 	if (m_renderObject)
 		m_renderObject->Set_Hidden(hidden);
 
@@ -1947,6 +2082,11 @@ void W3DModelDraw::setFullyObscuredByShroud(Bool fullyObscured)
 	{
 		m_fullyObscuredByShroud = fullyObscured;
 
+		// GeneralsX @bugfix Claude 19/11/2026 The scene does not draw what the fog of war hides
+		// (RTS3DScene::Visibility_Check()); the tree batch must not draw it either.
+		if (m_inTreeBatch && TheW3DTreeBatch != nullptr)
+			TheW3DTreeBatch->showTree(this, !m_fullyObscuredByShroud);
+
 		if (m_shadow)
 			m_shadow->enableShadowInvisible(m_fullyObscuredByShroud);
 		if (m_terrainDecal)
@@ -2042,8 +2182,30 @@ void W3DModelDraw::adjustTransformMtx(Matrix3D& mtx) const
 }
 
 //-------------------------------------------------------------------------------------------------
+// GeneralsX @feature Claude 18/11/2026 Timers for the parts of placing a model, read by the PS Vita
+// frame profile: the animation, the transform, turrets, the particle systems on bones, and recoil.
+DECLARE_PERF_TIMER(ModelDraw_anim)
+DECLARE_PERF_TIMER(ModelDraw_transform)
+DECLARE_PERF_TIMER(ModelDraw_turret)
+DECLARE_PERF_TIMER(ModelDraw_particleBones)
+DECLARE_PERF_TIMER(ModelDraw_recoil)
 void W3DModelDraw::doDrawModule(const Matrix3D* transformMtx)
 {
+	// GeneralsX @performance Claude 19/11/2026 A tree in the batch (W3DTreeBatch.h) is drawn by it for as
+	// long as it stands where it went in and looks as it did then, and has nothing to do here.
+	if (m_inTreeBatch)
+	{
+		Matrix3D mtx = *transformMtx;
+		if (getDrawable()->getInstanceScale() != 1.0f)
+			mtx.Scale(getDrawable()->getInstanceScale());
+		adjustTransformMtx(mtx);
+		if (mtx == m_treeBatchTransform && treeBatchStillFits())
+			return;
+		leaveTreeBatch();
+	}
+
+	{
+	USE_PERF_TIMER(ModelDraw_anim)
 	// update whether or not we should be animating.
 	setPauseAnimation( !getDrawable()->getShouldAnimate(getW3DModelDrawModuleData()->m_animationsRequirePower) );
 
@@ -2095,10 +2257,12 @@ void W3DModelDraw::doDrawModule(const Matrix3D* transformMtx)
 	}
 
 	adjustAnimSpeedToMovementSpeed();
+	}
 
 	// set our position in the render object to our position of the drawable
 	if (m_renderObject)
 	{
+		USE_PERF_TIMER(ModelDraw_transform)
 		Matrix3D mtx = *transformMtx;
 		adjustTransformMtx(mtx);
 
@@ -2108,19 +2272,41 @@ void W3DModelDraw::doDrawModule(const Matrix3D* transformMtx)
 		// thread on the PS Vita had a ninth of a frame under HLodClass::Update_Sub_Object_Transforms().
 		// A model that is animated works its hierarchy out when it is rendered whether this was
 		// called or not (Animatable3DObjClass::Render), and what moves a bone says so itself.
-		if (!(mtx == m_renderObject->Get_Transform()))
+		const Bool moved = !(mtx == m_renderObject->Get_Transform());
+		if (moved)
 			m_renderObject->Set_Transform(mtx);
+
+		// GeneralsX @performance Claude 19/11/2026 An intact tree that stood still since the last frame is
+		// drawn by the tree batch from now on, where it stands (W3DTreeBatch.h). One that moves (falls,
+		// sways) would leave it again on the next frame, and every time it came in, its chunk would grow.
+		if (!moved && TheW3DTreeBatch != nullptr && canEnterTreeBatch() && TheW3DTreeBatch->addTree(this, m_renderObject, !m_fullyObscuredByShroud))
+		{
+			W3DDisplay::m_3DScene->Remove_Render_Object(m_renderObject);
+			m_inTreeBatch = TRUE;
+			m_treeBatchTransform = mtx;
+			return;
+		}
 	}
 
-	handleClientTurretPositioning();
-	recalcBonesForClientParticleSystems();
+	{
+		USE_PERF_TIMER(ModelDraw_turret)
+		handleClientTurretPositioning();
+	}
 
-  const W3DModelDrawModuleData *modData = getW3DModelDrawModuleData();
-  if ( modData->m_particlesAttachedToAnimatedBones )
-    updateBonesForClientParticleSystems();// LORENZEN ADDED THIS
-                                          // IT REPOSITIONS PARTICLESYSTEMS TO TSTAY IN SYNC WITH ANIMATED BONES
+	{
+		USE_PERF_TIMER(ModelDraw_particleBones)
+		recalcBonesForClientParticleSystems();
 
-  handleClientRecoil();
+		const W3DModelDrawModuleData *modData = getW3DModelDrawModuleData();
+		if ( modData->m_particlesAttachedToAnimatedBones )
+			updateBonesForClientParticleSystems();// LORENZEN ADDED THIS
+		                                      // IT REPOSITIONS PARTICLESYSTEMS TO TSTAY IN SYNC WITH ANIMATED BONES
+	}
+
+	{
+		USE_PERF_TIMER(ModelDraw_recoil)
+		handleClientRecoil();
+	}
 
 }
 
@@ -2789,6 +2975,10 @@ void W3DModelDraw::setTerrainDecalOpacity(Real o)
 //-------------------------------------------------------------------------------------------------
 void W3DModelDraw::nukeCurrentRender(Matrix3D* xform)
 {
+	// GeneralsX @performance Claude 19/11/2026 The model goes back into the scene first, where it is
+	// taken out of below.
+	leaveTreeBatch();
+
 	// this needs to be "dirtied" so that the new pausing of the animation will be triggered.
 	m_pauseAnimation = false;
 
@@ -2995,6 +3185,10 @@ void W3DModelDraw::setModelState(const ModelConditionInfo* newState)
 			}
 		}
 	}
+
+	// GeneralsX @performance Claude 19/11/2026 A tree that changes its state (catches fire, burns out,
+	// falls) is drawn on its own from now on, as the state says.
+	leaveTreeBatch();
 
 	// get this here, before we change anything... we'll need it to pass to adjustAnimation (srj)
 	Real prevAnimFraction = getCurrentAnimFraction();

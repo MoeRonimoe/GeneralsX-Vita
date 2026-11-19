@@ -53,6 +53,8 @@ public:
 	virtual void clientUpdate() override;
 
 	void stopSway() { m_swaying = false; }
+	// GeneralsX @performance Claude 19/11/2026 For the tree batch, which draws only trees that stand still.
+	Bool isSwaying() const { return m_swaying; }
 
 protected:
 

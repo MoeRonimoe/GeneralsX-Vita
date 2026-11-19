@@ -437,7 +437,7 @@ void W3DGhostObject::removeParentObject()
 			RenderObjClass *robj = w3dDraw->getRenderObject();
 			if (robj)
 			{
-				DEBUG_ASSERTCRASH(robj->Peek_Scene() != nullptr, ("Removing GhostObject parent not in scene"));
+				DEBUG_ASSERTCRASH(robj->Peek_Scene() != nullptr || w3dDraw->isInTreeBatch(), ("Removing GhostObject parent not in scene"));
 				robj->Remove();
 			}
 		}
@@ -479,7 +479,9 @@ void W3DGhostObject::restoreParentObject()
 				//removed by the ghost object manager, so restore it.  If we have a render
 				//object that is in the scene, then it was probably added because the model
 				//changed while the object was ghosted (for damage states, garrison, etc.).
-				if (!robj->Is_In_Scene())
+				// GeneralsX @bugfix Claude 19/11/2026 A tree the tree batch draws is not in the scene
+				// either, and must not be put there: it would be drawn twice.
+				if (!robj->Is_In_Scene() && !w3dDraw->isInTreeBatch())
 					W3DDisplay::m_3DScene->Add_Render_Object(robj);
 			}
 		}

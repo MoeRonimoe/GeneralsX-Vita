@@ -43,6 +43,8 @@
 #include "GameLogic/Object.h"
 #include "GameLogic/GameLogic.h"
 #include "GameClient/Drawable.h"
+#include "GameClient/GameClient.h"
+#include "W3DDevice/GameClient/Module/W3DModelDraw.h"
 #include "GameClient/ParticleSys.h"
 #include "GameClient/Color.h"
 #include "GameClient/View.h"
@@ -53,6 +55,13 @@
 #include "W3DDevice/GameClient/W3DStatusCircle.h"
 #include "W3DDevice/GameClient/W3DCustomScene.h"
 #include "W3DDevice/GameClient/W3DShroud.h"
+#include "W3DDevice/GameClient/W3DTreeBatchRenderer.h"
+
+#if defined(__vita__) && defined(VITA_FRAME_PROFILE)
+#include "Common/ThingTemplate.h"
+#include <cstdio>
+#include <map>
+#endif
 #include "WW3D2/camera.h"
 #include "WW3D2/dx8renderer.h"
 #include "WW3D2/sortingrenderer.h"
@@ -62,6 +71,7 @@
 #include "WW3D2/shader.h"
 #include "WW3D2/dx8caps.h"
 #include "WW3D2/colorspace.h"
+
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -100,6 +110,27 @@ RTS3DScene::RTS3DScene()
 
 	m_scratchLight = NEW_REF( LightClass, (LightClass::DIRECTIONAL) );
 //	REF_PTR_SET(m_globalLight[lightIndex], pLight);
+
+	m_sharedLightEnv[0] = nullptr;
+	m_sharedLightEnv[1] = nullptr;
+	m_sharedLightEnvPass = 0;
+	m_sharedLightEnvFrame = 0;
+	m_renderPass = 1;
+
+	// GeneralsX @performance Claude 19/11/2026 On the PS Vita the trees that stand still are drawn
+	// together (W3DTreeBatch.h); "+VITA_TREE_BATCH=0" in vita_args.txt draws each on its own, as on the
+	// other platforms.
+	m_treeBatch = nullptr;
+	m_treeBatchPrimed = FALSE;
+	m_treeBatchPrimeFrame = 0;
+#ifdef __vita__
+	const char *treeBatch = getenv("VITA_TREE_BATCH");
+	if (treeBatch == nullptr || atoi(treeBatch) != 0)
+	{
+		m_treeBatch = new W3DTreeBatchRenderer;
+		TheW3DTreeBatch = m_treeBatch;
+	}
+#endif
 
 #if ENABLE_CONFIGURABLE_SHROUD
 	if (TheGlobalData->m_shroudOn)
@@ -189,6 +220,13 @@ RTS3DScene::RTS3DScene()
 //=============================================================================
 RTS3DScene::~RTS3DScene()
 {
+	// GeneralsX @performance Claude 19/11/2026 Models still in the batch go back to a scene of their own
+	// when they leave it; this one is gone then.
+	if (TheW3DTreeBatch == m_treeBatch)
+		TheW3DTreeBatch = nullptr;
+	delete m_treeBatch;
+	m_treeBatch = nullptr;
+
 	Int i=0;
 	for (; i<LightEnvironmentClass::MAX_LIGHTS; i++)
 	{
@@ -520,6 +558,7 @@ void RTS3DScene::renderSpecificDrawables(RenderInfoClass &rinfo, Int numDrawable
 	StDrawableDirtyStuffLocker lockDirtyStuff;
 #endif
 	const Int localPlayerIndex = rts::getObservedOrLocalPlayerIndex_Safe();
+	++m_renderPass;	// GeneralsX @performance Claude 18/11/2026 A new pass: the shared light environment is made again.
 	RefRenderObjListIterator it(&UpdateList);
 	// loop through all render objects in the list:
 	for (it.First(&RenderList); !it.Is_Done();)
@@ -553,6 +592,10 @@ void RTS3DScene::renderSpecificDrawables(RenderInfoClass &rinfo, Int numDrawable
 //=============================================================================
 /** Renders a single drawable entity. */
 //=============================================================================
+// GeneralsX @feature Claude 18/11/2026 Timers for the PS Vita frame profile: one object as a whole,
+// and the part that hands its meshes to the renderer (the rest is its lights).
+DECLARE_PERF_TIMER(Scene_renderOneObject)
+DECLARE_PERF_TIMER(Scene_objRender)
 void RTS3DScene::renderOneObject(RenderInfoClass &rinfo, RenderObjClass *robj, Int localPlayerIndex)
 {
 	Drawable *draw = nullptr;
@@ -570,7 +613,15 @@ void RTS3DScene::renderOneObject(RenderInfoClass &rinfo, RenderObjClass *robj, I
 		return;	//decals are not lit by this system yet so skip rest of lighting
 	}
 
-	LightEnvironmentClass lightEnv;
+	USE_PERF_TIMER(Scene_renderOneObject)
+
+	// GeneralsX @performance Claude 18/11/2026 An object that needs a light environment of its own
+	// (tinted, or reached by a point or spot light) makes it in one that lasts until the frame is
+	// drawn, so that its meshes point to it instead of each copying it into itself
+	// (LightEnvironmentClass::Take_Frame_Environment()); the others share one, see
+	// sharedLightEnvironment(). The environment of its own is made when it is known to be needed.
+	LightEnvironmentClass localLightEnv;
+	LightEnvironmentClass *lightEnv = nullptr;
 	SphereClass sph = robj->Get_Bounding_Sphere();
 	drawInfo = (DrawableInfo *)robj->Get_User_Data();
 	if (drawInfo)
@@ -636,9 +687,6 @@ void RTS3DScene::renderOneObject(RenderInfoClass &rinfo, RenderObjClass *robj, I
 			sceneLights = m_infantryLight;
 		}
 
-		lightEnv.Reset(sph.Center, ambient);
-
-
 		// HANDLE THE SPECIAL DRAWABLE-LEVEL COLORING SETTINGS FIRST
 
 		const Vector3 *tintColor = nullptr;
@@ -647,8 +695,15 @@ void RTS3DScene::renderOneObject(RenderInfoClass &rinfo, RenderObjClass *robj, I
 		tintColor			 = draw->getTintColor();
 		selectionColor = draw->getSelectionColor();
 
+		// GeneralsX @performance Claude 18/11/2026 Without a tint the directional lights are added with the
+		// other lights, below.
 		if ( tintColor || selectionColor )
 		{
+			lightEnv = LightEnvironmentClass::Take_Frame_Environment();
+			if (lightEnv == nullptr)
+				lightEnv = &localLightEnv;
+			lightEnv->Reset(sph.Center, ambient);
+
 			Vector3 sumTint, temp, restore;
 
 			sumTint.Set(0,0,0);
@@ -666,23 +721,16 @@ void RTS3DScene::renderOneObject(RenderInfoClass &rinfo, RenderObjClass *robj, I
 				Vector3::Add(temp, sumTint, &temp);
 
 				sceneLights[globalLightIndex]->Set_Diffuse( temp );
-				lightEnv.Add_Light(*sceneLights[globalLightIndex]);
+				lightEnv->Add_Light(*sceneLights[globalLightIndex]);
 				sceneLights[globalLightIndex]->Set_Diffuse( restore );
 
 			}
 
-			temp = lightEnv.Get_Equivalent_Ambient();
+			temp = lightEnv->Get_Equivalent_Ambient();
 			Vector3::Add(sumTint, temp, &temp );
 
-			lightEnv.Set_Output_Ambient( temp );
+			lightEnv->Set_Output_Ambient( temp );
 
-		}
-		else // no funny coloring going on, so just add the lights normally
-		{
-			for (Int globalLightIndex = 0; globalLightIndex < m_numGlobalLights; globalLightIndex++)
-			{
-				lightEnv.Add_Light(*sceneLights[globalLightIndex]);
-			}
 		}
 
 		//Apply custom render pass for any drawables with heatvision enabled
@@ -720,46 +768,62 @@ void RTS3DScene::renderOneObject(RenderInfoClass &rinfo, RenderObjClass *robj, I
 			rinfo.light_environment = nullptr;
 			return;
 		}
-		else
-		{
-			lightEnv.Reset(sph.Center, ambient);
-			for (Int globalLightIndex = 0; globalLightIndex < m_numGlobalLights; globalLightIndex++)
-				lightEnv.Add_Light(*m_globalLight[globalLightIndex]);
-		}
+		// GeneralsX @performance Claude 18/11/2026 The global lights (sceneLights) are added below.
 	}
 
 	if (!drawableHidden)
 	{
-		//standard scene lights
-		RefRenderObjListIterator it2(&LightList);
-		for (it2.First(); !it2.Is_Done(); it2.Next())
+		// GeneralsX @performance Claude 18/11/2026 An object without a tint that no point or spot light
+		// reaches gets the same environment as every other such object.
+		LightEnvironmentClass *objectLightEnv = nullptr;
+		if (lightEnv == nullptr && !isLitByPositionalLight(sph))
+			objectLightEnv = sharedLightEnvironment(rinfo, sceneLights, ambient);
+
+		if (objectLightEnv == nullptr)
 		{
-			LightClass *pLight = (LightClass*)it2.Peek_Obj();
-			SphereClass lSph = pLight->Get_Bounding_Sphere();
-			Bool cull = (pLight->Get_Type() == LightClass::POINT && !Spheres_Intersect(sph, lSph));
-			if (!cull) {
-				lightEnv.Add_Light(*pLight);
+			if (lightEnv == nullptr)
+			{
+				lightEnv = LightEnvironmentClass::Take_Frame_Environment();
+				if (lightEnv == nullptr)
+					lightEnv = &localLightEnv;
+				lightEnv->Reset(sph.Center, ambient);
+				for (Int globalLightIndex = 0; globalLightIndex < m_numGlobalLights; globalLightIndex++)
+					lightEnv->Add_Light(*sceneLights[globalLightIndex]);
 			}
+
+			//standard scene lights
+			RefRenderObjListIterator it2(&LightList);
+			for (it2.First(); !it2.Is_Done(); it2.Next())
+			{
+				LightClass *pLight = (LightClass*)it2.Peek_Obj();
+				SphereClass lSph = pLight->Get_Bounding_Sphere();
+				Bool cull = (pLight->Get_Type() == LightClass::POINT && !Spheres_Intersect(sph, lSph));
+				if (!cull) {
+					lightEnv->Add_Light(*pLight);
+				}
+			}
+
+			// dynamic lights
+			RefRenderObjListIterator dynaLightIt(&m_dynamicLightList);
+			for (dynaLightIt.First(); !dynaLightIt.Is_Done(); dynaLightIt.Next())
+			{
+				W3DDynamicLight* pDyna = (W3DDynamicLight*)dynaLightIt.Peek_Obj();
+				if (!pDyna->isEnabled()) {
+					continue;
+				}
+				SphereClass lSph = pDyna->Get_Bounding_Sphere();
+				if (pDyna->Get_Type() == LightClass::POINT && !Spheres_Intersect(sph, lSph)) {
+					continue;
+				}
+				lightEnv->Add_Light(*(LightClass*)dynaLightIt.Peek_Obj());
+			}
+
+			lightEnv->Pre_Render_Update(rinfo.Camera.Get_Transform());
+			objectLightEnv = lightEnv;
 		}
+		rinfo.light_environment = objectLightEnv;
 
-		// dynamic lights
-		RefRenderObjListIterator dynaLightIt(&m_dynamicLightList);
-		for (dynaLightIt.First(); !dynaLightIt.Is_Done(); dynaLightIt.Next())
-		{
-			W3DDynamicLight* pDyna = (W3DDynamicLight*)dynaLightIt.Peek_Obj();
-			if (!pDyna->isEnabled()) {
-				continue;
-			}
-			SphereClass lSph = pDyna->Get_Bounding_Sphere();
-			if (pDyna->Get_Type() == LightClass::POINT && !Spheres_Intersect(sph, lSph)) {
-				continue;
-			}
-			lightEnv.Add_Light(*(LightClass*)dynaLightIt.Peek_Obj());
-		}
-
-		lightEnv.Pre_Render_Update(rinfo.Camera.Get_Transform());
-		rinfo.light_environment = &lightEnv;
-
+		USE_PERF_TIMER(Scene_objRender)
 		if (drawInfo)
 		{
 #if ENABLE_CONFIGURABLE_SHROUD
@@ -802,6 +866,161 @@ void RTS3DScene::renderOneObject(RenderInfoClass &rinfo, RenderObjClass *robj, I
 		rinfo.Pop_Override_Flags();	//flags used to disable base pass and only render custom heat vision pass.
 }
 
+//=============================================================================
+// RTS3DScene::primeTreeBatch
+//=============================================================================
+/** GeneralsX @performance Claude 19/11/2026 Puts the trees of a mission into the tree batch together,
+	* once it has begun (W3DModelDraw::enterTreeBatchWhereStanding()). A mission that is loaded while
+	* another one ran starts its steps from the beginning again. */
+//=============================================================================
+void RTS3DScene::primeTreeBatch()
+{
+	if (m_treeBatch == nullptr)
+		return;
+
+	if (TheGameLogic == nullptr || TheGameClient == nullptr || !TheGameLogic->isInGame() || TheGameLogic->getFrame() == 0)
+	{
+		m_treeBatchPrimed = FALSE;
+		return;
+	}
+
+	const UnsignedInt frame = TheGameLogic->getFrame();
+	if (m_treeBatchPrimed && frame >= m_treeBatchPrimeFrame)
+		return;
+
+	m_treeBatchPrimed = TRUE;
+	m_treeBatchPrimeFrame = frame;
+#if defined(__vita__) && defined(VITA_FRAME_PROFILE)
+	// With the PS Vita's frame profile the log says which trees stayed out, and why.
+	std::map<AsciiString, Int> refusals;
+	Int notModelDrawn = 0;
+#endif
+	for (Drawable *draw = TheGameClient->firstDrawable(); draw != nullptr; draw = draw->getNextDrawable())
+	{
+		if (!draw->isKindOf(KINDOF_SHRUBBERY))
+			continue;
+		for (DrawModule **dm = draw->getDrawModules(); *dm != nullptr; ++dm)
+		{
+			W3DModelDraw *modelDraw = dynamic_cast<W3DModelDraw *>(*dm);
+			if (modelDraw != nullptr)
+			{
+				modelDraw->enterTreeBatchWhereStanding();
+#if defined(__vita__) && defined(VITA_FRAME_PROFILE)
+				const char *refusal = modelDraw->treeBatchRefusal();
+				if (refusal != nullptr)
+				{
+					AsciiString key = draw->getTemplate()->getName();
+					key.concat(" (");
+					key.concat(refusal);
+					key.concat(")");
+					++refusals[key];
+				}
+			}
+			else
+			{
+				++notModelDrawn;
+#endif
+			}
+		}
+	}
+#if defined(__vita__) && defined(VITA_FRAME_PROFILE)
+	fprintf(stderr, "[trees] left out of the batch:");
+	for (std::map<AsciiString, Int>::const_iterator it = refusals.begin(); it != refusals.end(); ++it)
+		fprintf(stderr, " %d %s,", it->second, it->first.str());
+	fprintf(stderr, " %d draw modules of other kinds\n", notModelDrawn);
+	fflush(stderr);
+#endif
+}
+
+//=============================================================================
+// RTS3DScene::isLitByPositionalLight
+//=============================================================================
+/** GeneralsX @performance Claude 18/11/2026 Whether a light that depends on where an object is
+	* would go into its light environment: a spot light, or a point light whose sphere meets the
+	* object's (the tests of renderOneObject()). */
+//=============================================================================
+Bool RTS3DScene::isLitByPositionalLight(const SphereClass &sphere)
+{
+	RefRenderObjListIterator it(&LightList);
+	for (it.First(); !it.Is_Done(); it.Next())
+	{
+		LightClass *light = (LightClass *)it.Peek_Obj();
+		if (light->Get_Type() == LightClass::DIRECTIONAL)
+			continue;
+		if (light->Get_Type() == LightClass::POINT && !Spheres_Intersect(sphere, light->Get_Bounding_Sphere()))
+			continue;
+		return TRUE;
+	}
+
+	RefRenderObjListIterator dynaLightIt(&m_dynamicLightList);
+	for (dynaLightIt.First(); !dynaLightIt.Is_Done(); dynaLightIt.Next())
+	{
+		W3DDynamicLight *light = (W3DDynamicLight *)dynaLightIt.Peek_Obj();
+		if (!light->isEnabled() || light->Get_Type() == LightClass::DIRECTIONAL)
+			continue;
+		if (light->Get_Type() == LightClass::POINT && !Spheres_Intersect(sphere, light->Get_Bounding_Sphere()))
+			continue;
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+//=============================================================================
+// RTS3DScene::sharedLightEnvironment
+//=============================================================================
+/** GeneralsX @performance Claude 18/11/2026 The light environment of every object without a tint
+	* that no point or spot light reaches. It is what renderOneObject() makes for such an object:
+	* the global lights, then the directional lights of the scene and the enabled directional
+	* dynamic lights, in that order. None of these depends on where the object is, so it is the
+	* same for all of them. It is made once per pass over the scene, from the camera of the pass,
+	* in an environment that lasts until the frame is drawn. Returns null when there is none to
+	* take, and the object makes its own. */
+//=============================================================================
+LightEnvironmentClass *RTS3DScene::sharedLightEnvironment(RenderInfoClass &rinfo, LightClass **lights, const Vector3 &ambient)
+{
+	const UnsignedInt frame = WW3D::Get_Frame_Count();
+	if (m_sharedLightEnvPass != m_renderPass || m_sharedLightEnvFrame != frame)
+	{
+		m_sharedLightEnv[0] = nullptr;
+		m_sharedLightEnv[1] = nullptr;
+		m_sharedLightEnvPass = m_renderPass;
+		m_sharedLightEnvFrame = frame;
+	}
+
+	const Int index = (lights == m_infantryLight) ? 1 : 0;
+	if (m_sharedLightEnv[index] != nullptr)
+		return m_sharedLightEnv[index];
+
+	LightEnvironmentClass *env = LightEnvironmentClass::Take_Frame_Environment();
+	if (env == nullptr)
+		return nullptr;
+
+	env->Reset(Vector3(0.0f, 0.0f, 0.0f), ambient);
+	for (Int globalLightIndex = 0; globalLightIndex < m_numGlobalLights; globalLightIndex++)
+		env->Add_Light(*lights[globalLightIndex]);
+
+	RefRenderObjListIterator it(&LightList);
+	for (it.First(); !it.Is_Done(); it.Next())
+	{
+		LightClass *light = (LightClass *)it.Peek_Obj();
+		if (light->Get_Type() == LightClass::DIRECTIONAL)
+			env->Add_Light(*light);
+	}
+
+	RefRenderObjListIterator dynaLightIt(&m_dynamicLightList);
+	for (dynaLightIt.First(); !dynaLightIt.Is_Done(); dynaLightIt.Next())
+	{
+		W3DDynamicLight *light = (W3DDynamicLight *)dynaLightIt.Peek_Obj();
+		if (light->isEnabled() && light->Get_Type() == LightClass::DIRECTIONAL)
+			env->Add_Light(*light);
+	}
+
+	env->Pre_Render_Update(rinfo.Camera.Get_Transform());
+	m_sharedLightEnv[index] = env;
+	return env;
+}
+
 DECLARE_PERF_TIMER(translucentRender)
 // GeneralsX @feature Claude 11/10/2026 Timers for the steps of drawing the scene, read by the PS Vita frame profile.
 DECLARE_PERF_TIMER(Scene_flushMeshes)
@@ -811,6 +1030,7 @@ DECLARE_PERF_TIMER(Scene_occludedColors)
 DECLARE_PERF_TIMER(Scene_trees)
 DECLARE_PERF_TIMER(Scene_staticSortLists)
 DECLARE_PERF_TIMER(Scene_translucentObjects)
+DECLARE_PERF_TIMER(Scene_treeBatch)
 
 /**Draw everything that was submitted from this scene*/
 void RTS3DScene::Flush(RenderInfoClass & rinfo)
@@ -826,6 +1046,19 @@ void RTS3DScene::Flush(RenderInfoClass & rinfo)
 	{
 		USE_PERF_TIMER(Scene_flushMeshes)
 		TheDX8MeshRenderer.Flush();	//draw all non-translucent objects.
+	}
+
+	// GeneralsX @performance Claude 19/11/2026 The intact trees that stand still, together (W3DTreeBatch.h),
+	// lit as every object is that only the sun and the moon reach, and darkened by the fog of war
+	// as renderOneObject() darkens an object. Not in reflections or the other kinds of passes.
+	if (m_treeBatch != nullptr && m_customPassMode == SCENE_PASS_DEFAULT && Get_Extra_Pass_Polygon_Mode() == EXTRA_PASS_DISABLE &&
+			!ShaderClass::Is_Backface_Culling_Inverted())
+	{
+		USE_PERF_TIMER(Scene_treeBatch)
+		MaterialPassClass *shroudPass = nullptr;
+		if (m_shroudMaterialPass != nullptr && TheTerrainRenderObject != nullptr && TheTerrainRenderObject->getShroud() != nullptr)
+			shroudPass = m_shroudMaterialPass;
+		m_treeBatch->render(rinfo, &m_defaultLightEnv, shroudPass);
 	}
 
 	//draw all non-translucent objects which were separated because they are hidden and need custom rendering.
@@ -1094,6 +1327,8 @@ void RTS3DScene::Customized_Render( RenderInfoClass &rinfo )
 	RenderObjClass *terrainObject=nullptr,*robj;
 	m_translucentObjectsCount = 0;	//start of new frame so no translucent objects
 	m_occludedObjectsCount = 0;
+	++m_renderPass;	// GeneralsX @performance Claude 18/11/2026 A new pass: the shared light environment is made again.
+	primeTreeBatch();
 
 	const Int localPlayerIndex = rts::getObservedOrLocalPlayerIndex_Safe();
 

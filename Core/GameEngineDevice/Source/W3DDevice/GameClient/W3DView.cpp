@@ -1243,11 +1243,32 @@ static void drawAudioRadii( const Drawable * drawable )
 //-------------------------------------------------------------------------------------------------
 /** An opportunity to draw something after all drawables have been drawn once */
 //-------------------------------------------------------------------------------------------------
+// GeneralsX @feature Claude 18/11/2026 Timer for the PS Vita frame profile: the icons, health bars and
+// texts of the drawables in the view.
+DECLARE_PERF_TIMER(W3DView_postDraw)
 static void drawablePostDraw( Drawable *draw, void *userData )
 {
 	Real FXPitch = TheTacticalView->getFXPitch();
 	if (draw->isDrawableEffectivelyHidden() || FXPitch < 0.0f)
 		return;
+
+#if RTS_GENERALS
+	// GeneralsX @performance Claude 19/11/2026 Most drawables in a view are trees, for which drawIconUI()
+	// draws nothing (Drawable::drawsNoIconUI()). Asking their object for its shroud status below reads
+	// memory of the object and of its partition data, for each of them on every frame; on the PS Vita
+	// that was most of this pass. Without a debug drawing that needs the status, such a drawable is
+	// only counted for the statistics, by the shroud status the client keeps for it.
+	Bool debugDrawing = TheGlobalData->m_showTerrainNormals;
+#if defined(RTS_DEBUG)
+	debugDrawing = debugDrawing || TheGlobalData->m_showCollisionExtents || TheGlobalData->m_showAudioLocations;
+#endif
+	if (!debugDrawing && draw->drawsNoIconUI())
+	{
+		if (!draw->getFullyObscuredByShroud())
+			TheGameClient->incrementRenderedObjectCount();
+		return;
+	}
+#endif
 
 	Object* obj = draw->getObject();
 	const Int localPlayerIndex = rts::getObservedOrLocalPlayerIndex_Safe();
@@ -2092,7 +2113,10 @@ void W3DView::draw()
 	TheGameClient->resetRenderedObjectCount();
 
 	TheDisplay->beginBatch();
-	TheGameClient->iterateDrawablesInRegion( &axisAlignedRegion, drawablePostDraw, this );
+	{
+		USE_PERF_TIMER(W3DView_postDraw)	// GeneralsX @feature Claude 18/11/2026 Timer for the PS Vita frame profile.
+		TheGameClient->iterateDrawablesInRegion( &axisAlignedRegion, drawablePostDraw, this );
+	}
 	TheDisplay->endBatch();
 
 	TheGameClient->flushTextBearingDrawables();
