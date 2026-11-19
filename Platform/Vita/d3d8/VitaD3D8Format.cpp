@@ -351,31 +351,36 @@ UINT GetVertexSize(DWORD fvf)
 }
 
 //-----------------------------------------------------------------------------
+/// Swaps the first and the third byte of a D3DCOLOR in memory (BGRA <-> RGBA), as one word.
+static inline void SwapRedAndBlue(uint8_t *color)
+{
+	uint32_t value;
+	memcpy(&value, color, sizeof(value));
+	value = (value & 0xFF00FF00u) | ((value >> 16) & 0x000000FFu) | ((value & 0x000000FFu) << 16);
+	memcpy(color, &value, sizeof(value));
+}
+
+//-----------------------------------------------------------------------------
 void SwapVertexColors(const VertexLayout &layout, void *vertices, UINT count)
 {
 	if ((layout.diffuseOffset < 0 && layout.specularOffset < 0) || layout.stride == 0)
 		return;
 
+	// Each color is swapped as one 32 bit word, and each of the two loops runs only for a color
+	// the vertices have: the terrain and the effects swap thousands of vertices per frame.
 	uint8_t *vertex = static_cast<uint8_t *>(vertices);
-	for (UINT i = 0; i < count; ++i)
+	const UINT stride = layout.stride;
+	if (layout.diffuseOffset >= 0)
 	{
-		if (layout.diffuseOffset >= 0)
-		{
-			uint8_t *color = vertex + layout.diffuseOffset;
-			const uint8_t blue = color[0];
-			color[0] = color[2];
-			color[2] = blue;
-		}
-
-		if (layout.specularOffset >= 0)
-		{
-			uint8_t *color = vertex + layout.specularOffset;
-			const uint8_t blue = color[0];
-			color[0] = color[2];
-			color[2] = blue;
-		}
-
-		vertex += layout.stride;
+		uint8_t *color = vertex + layout.diffuseOffset;
+		for (UINT i = 0; i < count; ++i, color += stride)
+			SwapRedAndBlue(color);
+	}
+	if (layout.specularOffset >= 0)
+	{
+		uint8_t *color = vertex + layout.specularOffset;
+		for (UINT i = 0; i < count; ++i, color += stride)
+			SwapRedAndBlue(color);
 	}
 }
 

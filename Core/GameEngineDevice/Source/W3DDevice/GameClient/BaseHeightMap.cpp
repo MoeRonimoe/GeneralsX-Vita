@@ -499,6 +499,141 @@ void BaseHeightMapRenderObjClass::ReAcquireResources()
 }
 
 //=============================================================================
+// BaseHeightMapRenderObjClass::collectTerrainLights
+//=============================================================================
+void BaseHeightMapRenderObjClass::collectTerrainLights(RefRenderObjListIterator *pLightsIterator, std::vector<TerrainLight> &lights)
+{
+	lights.clear();
+	if (pLightsIterator == nullptr)
+		return;
+
+	for (pLightsIterator->First(); !pLightsIterator->Is_Done(); pLightsIterator->Next())
+	{
+		LightClass *pLight = (LightClass*)pLightsIterator->Peek_Obj();
+		TerrainLight light;
+		light.type = pLight->Get_Type();
+		light.position.Set(0.0f, 0.0f, 0.0f);
+		light.midRange = 0.0;
+		light.range = 0.0;
+		light.direction.Set(0.0f, 0.0f, 0.0f);
+		switch (light.type) {
+		case LightClass::POINT:
+		case LightClass::SPOT:
+			light.position = pLight->Get_Position();
+			pLight->Get_Far_Attenuation_Range(light.midRange, light.range);
+			break;
+		case LightClass::DIRECTIONAL:
+			light.direction = pLight->Get_Transform().Get_Z_Vector();
+			light.direction.Normalize();
+			break;
+		};
+		pLight->Get_Diffuse(&light.diffuse);
+		pLight->Get_Ambient(&light.ambient);
+		lights.push_back(light);
+	}
+}
+
+//=============================================================================
+// BaseHeightMapRenderObjClass::doTheLight
+//=============================================================================
+/** The same as the doTheLight() below, with the lights of the scene taken beforehand
+(collectTerrainLights()). */
+//=============================================================================
+void BaseHeightMapRenderObjClass::doTheLight(VERTEX_FORMAT *vb, const Vector3*light, Vector3*normal, const TerrainLight *lights, Int numLights, UnsignedByte alpha)
+{
+#ifdef USE_NORMALS
+	vb->nx = normal->X;
+	vb->ny = normal->Y;
+	vb->nz = normal->Z;
+#else
+	Real shadeR, shadeG, shadeB;
+	Real shade;
+	shadeR = TheGlobalData->m_terrainAmbient[0].red;	//only the first terrain light contributes to ambient
+	shadeG = TheGlobalData->m_terrainAmbient[0].green;
+	shadeB = TheGlobalData->m_terrainAmbient[0].blue;
+
+	for (Int lightIndex = 0; lightIndex < numLights; ++lightIndex)
+	{
+		const TerrainLight &sceneLight = lights[lightIndex];
+		Vector3 lightDirection(vb->x, vb->y, vb->z);
+		Real factor = 1.0f;
+		switch(sceneLight.type) {
+		case LightClass::POINT:
+		case LightClass::SPOT: {
+				const Vector3 &lightLoc = sceneLight.position;
+				lightDirection -= lightLoc;
+				const double range = sceneLight.range;
+				const double midRange = sceneLight.midRange;
+				if (vb->x < lightLoc.X-range) continue;
+				if (vb->x > lightLoc.X+range) continue;
+				if (vb->y < lightLoc.Y-range) continue;
+				if (vb->y > lightLoc.Y+range) continue;
+				Real dist = lightDirection.Length();
+				if (dist >= range) continue;
+				if (midRange < 0.1) continue;
+				factor = 1.0f - (dist - midRange) / (range - midRange);
+				factor = WWMath::Clamp(factor,0.0f,1.0f);
+			}
+			lightDirection.Normalize();
+			break;
+		case LightClass::DIRECTIONAL:
+			lightDirection = sceneLight.direction;
+			factor = 1.0;
+			break;
+		default:
+			lightDirection.Normalize();
+			break;
+		};
+		Vector3 lightRay(-lightDirection.X, -lightDirection.Y, -lightDirection.Z);
+		shade = Vector3::Dot_Product(lightRay, *normal);
+		shade *= factor;
+		if (shade > 1.0) shade = 1.0;
+		if(shade < 0.0f) shade = 0.0f;
+		shadeR += shade*sceneLight.diffuse.X;
+		shadeG += shade*sceneLight.diffuse.Y;
+		shadeB += shade*sceneLight.diffuse.Z;
+		shadeR += factor*sceneLight.ambient.X;
+		shadeG += factor*sceneLight.ambient.Y;
+		shadeB += factor*sceneLight.ambient.Z;
+	}
+	// Add in global diffuse value.
+	const RGBColor *terrainDiffuse;
+	for (Int lightIndex=0; lightIndex < TheGlobalData->m_numGlobalLights; lightIndex++)
+	{
+		shade = Vector3::Dot_Product(light[lightIndex], *normal);
+		if (shade > 1.0) shade = 1.0;
+		if(shade < 0.0f) shade = 0.0f;
+		terrainDiffuse=&TheGlobalData->m_terrainDiffuse[lightIndex];
+		shadeR += shade*terrainDiffuse->red;
+		shadeG += shade*terrainDiffuse->green;
+		shadeB += shade*terrainDiffuse->blue;
+	}
+
+	if (shadeR > 1.0) shadeR = 1.0;
+	if(shadeR < 0.0f) shadeR = 0.0f;
+	if (shadeG > 1.0) shadeG = 1.0;
+	if(shadeG < 0.0f) shadeG = 0.0f;
+	if (shadeB > 1.0) shadeB = 1.0;
+	if(shadeB < 0.0f) shadeB = 0.0f;
+
+	if (m_useDepthFade && vb->z <= TheGlobalData->m_waterPositionZ)
+	{
+		//height is below water level
+		//reduce lighting values based on light fall off as it travels through water.
+		float depthScale = (1.4f - vb->z)/TheGlobalData->m_waterPositionZ;
+		shadeR *= 1.0f - depthScale * (1.0f-m_depthFade.X);
+		shadeG *= 1.0f - depthScale * (1.0f-m_depthFade.Y);
+		shadeB *= 1.0f - depthScale * (1.0f-m_depthFade.Z);
+	}
+
+	shadeR*=255.0f;
+	shadeG*=255.0f;
+	shadeB*=255.0f;
+	vb->diffuse = REAL_TO_INT(shadeB) | (REAL_TO_INT(shadeG) << 8) | (REAL_TO_INT(shadeR) << 16) | ((Int)alpha << 24);
+#endif
+}
+
+//=============================================================================
 // BaseHeightMapRenderObjClass::doTheLight
 //=============================================================================
 /** Calculates the diffuse lighting for a vertex in the terrain, taking all of the

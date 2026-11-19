@@ -151,6 +151,23 @@ public:
 	void doTextures(Bool flag) {m_disableTextures = !flag;};
 	/// Update the diffuse value from static light info for one vertex.
 	void doTheLight(VERTEX_FORMAT *vb, const Vector3*light, Vector3*normal, RefRenderObjListIterator *pLightsIterator, UnsignedByte alpha);
+
+	// GeneralsX @performance Claude 19/11/2026 What doTheLight() asks each light of the scene for, asked
+	// once for all the vertices of an update instead of once per vertex: a vertex buffer update of the
+	// terrain lights thousands of vertices, and in a battle the scene has a light for every explosion
+	// and muzzle flash. The other doTheLight() gives the same colors.
+	struct TerrainLight
+	{
+		Int type;						///< LightClass::Get_Type()
+		Vector3 position;		///< of a point or spot light
+		double midRange;		///< LightClass::Get_Far_Attenuation_Range()
+		double range;
+		Vector3 direction;	///< of a directional light, normalized
+		Vector3 diffuse;
+		Vector3 ambient;
+	};
+	static void collectTerrainLights(RefRenderObjListIterator *pLightsIterator, std::vector<TerrainLight> &lights);
+	void doTheLight(VERTEX_FORMAT *vb, const Vector3*light, Vector3*normal, const TerrainLight *lights, Int numLights, UnsignedByte alpha);
 	void addScorch(Vector3 location, Real radius, Scorches type);
 	void addStaticScorch(Vector3 location, Real radius, Scorches type);
 	void addTree(DrawableID id, Coord3D location, Real scale, Real angle,
@@ -256,6 +273,7 @@ protected:
 
 	// STL is "smart." This is a variable sized bitset. Very memory efficient.
 	std::vector<bool> m_showAsVisibleCliff;
+	std::vector<TerrainLight> m_terrainLights;	///< see collectTerrainLights()
 
 
 	ShaderClass m_shaderClass; ///<shader or rendering state for heightmap

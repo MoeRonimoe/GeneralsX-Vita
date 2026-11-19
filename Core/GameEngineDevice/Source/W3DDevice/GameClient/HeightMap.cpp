@@ -324,6 +324,11 @@ Int HeightMapRenderObjClass::updateVB(DX8VertexBufferClass	*pVB, VERTEX_FORMAT *
 			lightRay[lightIndex].Set(-lightPos.x, -lightPos.y, -lightPos.z);
 		}
 
+		// GeneralsX @performance Claude 19/11/2026 The lights of the scene, taken once for all vertices.
+		collectTerrainLights(pLightsIterator, m_terrainLights);
+		const TerrainLight *sceneLights = m_terrainLights.empty() ? nullptr : &m_terrainLights[0];
+		const Int numSceneLights = static_cast<Int>(m_terrainLights.size());
+
 		// GeneralsX @performance Claude 13/10/2026 Only the rows that are written are locked. A lock
 		// of everything says that everything may have changed, and a driver that keeps the buffer
 		// elsewhere has to take all of it again: on the PS Vita 4096 vertices were copied three
@@ -390,7 +395,7 @@ Int HeightMapRenderObjClass::updateVB(DX8VertexBufferClass	*pVB, VERTEX_FORMAT *
 				vb->v1=V[0];
 				vb->u2=UA[0];
 				vb->v2=VA[0];
-				doTheLight(vb, lightRay, &normalAtTexel, pLightsIterator, alpha[0]);
+				doTheLight(vb, lightRay, &normalAtTexel, sceneLights, numSceneLights, alpha[0]);
 				vb++;
 
 				//top-right sample
@@ -412,7 +417,7 @@ Int HeightMapRenderObjClass::updateVB(DX8VertexBufferClass	*pVB, VERTEX_FORMAT *
 				vb->v1=V[1];
 				vb->u2=UA[1];
 				vb->v2=VA[1];
-				doTheLight(vb, lightRay, &normalAtTexel, pLightsIterator, alpha[1]);
+				doTheLight(vb, lightRay, &normalAtTexel, sceneLights, numSceneLights, alpha[1]);
 				vb++;
 
 				//bottom-right sample
@@ -438,7 +443,7 @@ Int HeightMapRenderObjClass::updateVB(DX8VertexBufferClass	*pVB, VERTEX_FORMAT *
 				vb->v1=V[2];
 				vb->u2=UA[2];
 				vb->v2=VA[2];
-				doTheLight(vb, lightRay, &normalAtTexel, pLightsIterator, alpha[2]);
+				doTheLight(vb, lightRay, &normalAtTexel, sceneLights, numSceneLights, alpha[2]);
 				vb++;
 
 				//bottom-left sample
@@ -469,7 +474,7 @@ Int HeightMapRenderObjClass::updateVB(DX8VertexBufferClass	*pVB, VERTEX_FORMAT *
 				vb->v1=V[3];
 				vb->u2=UA[3];
 				vb->v2=VA[3];
-				doTheLight(vb, lightRay, &normalAtTexel, pLightsIterator, alpha[3]);
+				doTheLight(vb, lightRay, &normalAtTexel, sceneLights, numSceneLights, alpha[3]);
 				vb++;
 
 				VERTEX_FORMAT *pCurVertices = vb-4;
