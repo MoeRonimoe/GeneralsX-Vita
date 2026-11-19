@@ -27,6 +27,10 @@
 
 #include <psp2/kernel/processmgr.h>
 
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
+
 // Last: from here on the calls to vitaGL go through the render thread.
 #include "VitaD3D8GL.h"
 
@@ -44,6 +48,59 @@ namespace
 
 // Time between two lines of frame statistics in the log.
 const uint64_t STATISTICS_PERIOD_US = 10 * 1000 * 1000;
+
+//-----------------------------------------------------------------------------
+/// The lowest and the highest of 16 bit indices, eight at a time with NEON.
+void FindIndexRange16(const uint16_t *from, UINT count, UINT &lowest, UINT &highest)
+{
+	uint16_t low = 0xFFFF;
+	uint16_t high = 0;
+	UINT i = 0;
+#if defined(__ARM_NEON)
+	if (count >= 8)
+	{
+		uint16x8_t lows = vdupq_n_u16(0xFFFF);
+		uint16x8_t highs = vdupq_n_u16(0);
+		for (; i + 8 <= count; i += 8)
+		{
+			const uint16x8_t v = vld1q_u16(from + i);
+			lows = vminq_u16(lows, v);
+			highs = vmaxq_u16(highs, v);
+		}
+		uint16x4_t l = vmin_u16(vget_low_u16(lows), vget_high_u16(lows));
+		l = vpmin_u16(l, l);
+		l = vpmin_u16(l, l);
+		low = vget_lane_u16(l, 0);
+		uint16x4_t h = vmax_u16(vget_low_u16(highs), vget_high_u16(highs));
+		h = vpmax_u16(h, h);
+		h = vpmax_u16(h, h);
+		high = vget_lane_u16(h, 0);
+	}
+#endif
+	for (; i < count; ++i)
+	{
+		if (from[i] < low)
+			low = from[i];
+		if (from[i] > high)
+			high = from[i];
+	}
+	lowest = low;
+	highest = high;
+}
+
+//-----------------------------------------------------------------------------
+/// 16 bit indices moved down by the lowest of them, eight at a time with NEON.
+void WriteRebasedIndices16(const uint16_t *from, uint16_t *to, UINT count, uint16_t lowest)
+{
+	UINT i = 0;
+#if defined(__ARM_NEON)
+	const uint16x8_t base = vdupq_n_u16(lowest);
+	for (; i + 8 <= count; i += 8)
+		vst1q_u16(to + i, vsubq_u16(vld1q_u16(from + i), base));
+#endif
+	for (; i < count; ++i)
+		to[i] = static_cast<uint16_t>(from[i] - lowest);
+}
 
 //-----------------------------------------------------------------------------
 /// Counts a draw call and the time it takes for the frame statistics.
@@ -1737,17 +1794,22 @@ const uint8_t *Device::KeepVertices(const uint8_t *source, UINT size)
 
 //-----------------------------------------------------------------------------
 /// Copies indices so that the lowest one becomes 0, and reports the range they covered.
-const void *Device::RebaseIndices(const uint8_t *source, UINT indexCount, UINT indexSize, UINT &lowest, UINT &highest)
+uint8_t *Device::IndexScratch(UINT size)
 {
-	const UINT size = indexCount * indexSize;
 	if (size > m_indexScratchSize)
 	{
 		free(m_indexScratch);
 		m_indexScratch = static_cast<uint8_t *>(malloc(size));
 		m_indexScratchSize = m_indexScratch != nullptr ? size : 0;
-		if (m_indexScratch == nullptr)
-			return nullptr;
 	}
+	return m_indexScratch;
+}
+
+//-----------------------------------------------------------------------------
+const void *Device::RebaseIndices(const uint8_t *source, UINT indexCount, UINT indexSize, UINT &lowest, UINT &highest)
+{
+	if (IndexScratch(indexCount * indexSize) == nullptr)
+		return nullptr;
 
 	lowest = 0xFFFFFFFFu;
 	highest = 0;
@@ -1919,11 +1981,24 @@ HRESULT STDMETHODCALLTYPE Device::DrawIndexedPrimitive(D3DPRIMITIVETYPE Primitiv
 		// over: more than 100 ms per frame during an explosion. So the arrays start at the
 		// lowest vertex the call uses, and the indices are moved down to match. The range
 		// is taken from the indices themselves; the caller's numbers are only a promise.
+		//
+		// The 16 bit indices nearly every such call has are looked at with NEON, and moved down
+		// straight into the stream instead of into a buffer that is then copied there.
 		UINT lowest;
 		UINT highest;
-		const void *rebased = RebaseIndices(indexStorage.GetSystemCopy() + indexOffset, indexCount, indexSize, lowest, highest);
-		if (rebased == nullptr)
-			return E_OUTOFMEMORY;
+		const uint8_t *indexSource = indexStorage.GetSystemCopy() + indexOffset;
+		const bool fastRebase = indexSize == 2;
+		const void *rebased = nullptr;
+		if (fastRebase)
+		{
+			FindIndexRange16(reinterpret_cast<const uint16_t *>(indexSource), indexCount, lowest, highest);
+		}
+		else
+		{
+			rebased = RebaseIndices(indexSource, indexCount, indexSize, lowest, highest);
+			if (rebased == nullptr)
+				return E_OUTOFMEMORY;
+		}
 
 		// The engine goes on to write the next vertices into the same buffers, and the
 		// indices are in a block that the next draw call reuses. If it writes the vertices
@@ -1950,7 +2025,21 @@ HRESULT STDMETHODCALLTYPE Device::DrawIndexedPrimitive(D3DPRIMITIVETYPE Primitiv
 		}
 
 		g_frameStatistics.copiedIndexBytes += indexCount * indexSize;
-		rebased = RenderThread::Keep(rebased, indexCount * indexSize);
+		if (fastRebase)
+		{
+			void *destination = RenderThread::Reserve(indexCount * indexSize);
+			if (destination == nullptr)
+				destination = IndexScratch(indexCount * indexSize);
+			if (destination == nullptr)
+				return E_OUTOFMEMORY;
+			WriteRebasedIndices16(reinterpret_cast<const uint16_t *>(indexSource), static_cast<uint16_t *>(destination),
+				indexCount, static_cast<uint16_t>(lowest));
+			rebased = destination;
+		}
+		else
+		{
+			rebased = RenderThread::Keep(rebased, indexCount * indexSize);
+		}
 
 		const GLuint last = highest - lowest;
 		RenderThread::Defer([this, cachedLayout, used, mode, last, count, indexType, rebased, swapColors]

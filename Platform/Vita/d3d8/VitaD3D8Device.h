@@ -258,6 +258,7 @@ private:
 	bool PrepareUserVertices(const VertexLayout *&layout, const void *data, UINT stride, UINT vertexCount);
 	const uint8_t *KeepVertices(const uint8_t *source, UINT size);
 	const void *RebaseIndices(const uint8_t *source, UINT indexCount, UINT indexSize, UINT &lowest, UINT &highest);
+	uint8_t *IndexScratch(UINT size);
 	static bool GetPrimitiveMode(D3DPRIMITIVETYPE type, UINT primitiveCount, GLenum &mode, UINT &vertexCount);
 
 	// THE RENDER THREAD (VitaD3D8State.cpp) -------------------------------------

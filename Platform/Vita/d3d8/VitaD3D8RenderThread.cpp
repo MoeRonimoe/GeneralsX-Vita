@@ -368,8 +368,11 @@ void Publish()
 	if (!g_queueing || s_published.load(std::memory_order_relaxed) == g_writer.written)
 		return;
 
-	// The render thread finds them by itself, at the latest after its nap.
-	s_published.store(g_writer.written);
+	// The render thread finds them by itself, at the latest after its nap. Its loads of the
+	// count acquire what was written before the count; a store that releases it is all that
+	// takes, one memory barrier where a sequentially consistent store has two, each waiting
+	// for every write before it to reach memory.
+	s_published.store(g_writer.written, std::memory_order_release);
 	g_writer.publishAt = g_writer.written + PUBLISH_AFTER_ENTRIES;
 }
 
@@ -381,6 +384,16 @@ const void *Keep(const void *data, size_t size)
 
 	Entry *entry = Allocate(sizeof(Entry) + size);
 	memcpy(entry + 1, data, size);
+	return entry + 1;
+}
+
+//-----------------------------------------------------------------------------
+void *Reserve(size_t size)
+{
+	if (!g_queueing || size == 0)
+		return nullptr;
+
+	Entry *entry = Allocate(sizeof(Entry) + size);
 	return entry + 1;
 }
 

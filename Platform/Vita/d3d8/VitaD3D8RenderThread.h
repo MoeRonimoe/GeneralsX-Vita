@@ -113,6 +113,11 @@ void Publish();
 /// written right after. Returns the data itself when calls are not being queued.
 const void *Keep(const void *data, size_t size);
 
+/// Space for data of the given size in the stream, for a call that is written right after,
+/// to be filled by the caller instead of copied there by Keep(). Null when calls are not being
+/// queued: the caller then writes the data where it can keep it until the call is made.
+void *Reserve(size_t size);
+
 /// Has the render thread call the function and waits until it has. Called from the
 /// render thread itself, or without one, it just calls.
 void RunSync(void (*function)(void *context), void *context);
