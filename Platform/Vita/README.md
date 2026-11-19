@@ -856,8 +856,20 @@ calls vitaGL directly; that file does not include `VitaD3D8GL.h`.
     (`HTreeClass::Anim_Update_Without_Interpolation()`, 2.5 ms); it was left alone, because
     the logic reads bone positions from these models and other floating point instructions
     could change them.
-  - Together the calm stretches went from 43 to 46 ms per frame (22 to 23 fps) to about 33
-    to 35 (29 to 30 fps), the opening battle from about 70 (14 fps) to 56 to 61 (16 to 18).
+  - The end of every step of the logic asked each disabled object whether a disabling had
+    ended, which read two lines of memory of each of the 2000 objects; it is left out now
+    while no disabling can end (`GameLogic::m_nextDisabledExpiry`, which
+    `Object::setDisabledUntil()` moves earlier), 0.5 ms. The sleepy update heap moves its
+    entries through a hole instead of swapping them, with the same comparisons and the same
+    result, 0.4 ms. The measuring build checks both every 64 steps (`[logic]` lines; none
+    has been seen). The terrain's vertex buffer updates take the lights of the scene once
+    instead of asking each light for every vertex (`collectTerrainLights()`), with the same
+    colors, 0.3 ms in the opening sequence and more when the view moves through a battle.
+  - Switching off the markers of units behind buildings (the option "Building Occlusion")
+    made no difference: the time the scene spends in `flushOccludedObjectsIntoStencil()` is
+    the drawing of the objects, which happens either way.
+  - Together the calm stretches went from 43 to 46 ms per frame (22 to 23 fps) to about 34
+    (29 to 30 fps), the opening battle from about 70 (14 fps) to 55 to 60 (17 to 18).
 - `lstrcpyn()` was mapped to `strncpy()` for all platforms that are not Windows, in
   `string_compat.h` of both games and in WWLib's `osdep.h`. The Windows function copies
   one character less than it is told and always ends the string; `strncpy()` does
