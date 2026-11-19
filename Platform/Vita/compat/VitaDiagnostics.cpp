@@ -83,9 +83,9 @@ uint64_t s_timeSlots[VitaDiagnostics::TIME_SLOT_COUNT];
 VitaDiagnostics::NamedTimer *s_namedTimers = nullptr;
 
 // Timers below this share of a frame are left out of the log.
-const double NAMED_TIMER_MIN_MS = 0.5;
+const double NAMED_TIMER_MIN_MS = 0.2;
 
-const int MAX_LOGGED_TIMERS = 28;
+const int MAX_LOGGED_TIMERS = 60;
 
 // A timer that runs more often than this per frame only times a part of its calls: some
 // sit in functions that are called thousands of times, where reading the clock on every

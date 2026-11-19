@@ -33,6 +33,7 @@
 #include "Common/DataChunk.h"
 #include "Common/GameState.h"
 #include "Common/MapObject.h"
+#include "Common/PerfTimer.h"
 #include "Common/Radar.h"
 #include "Common/ThingFactory.h"
 #include "Common/ThingTemplate.h"
@@ -2154,8 +2155,11 @@ Bool TerrainLogic::isUnderwater( Real x, Real y, Real *waterZ, Real *terrainZ )
 // ------------------------------------------------------------------------------------------------
 /** Get the water table with the highest water Z value at the location */
 // ------------------------------------------------------------------------------------------------
+// GeneralsX @feature Claude 18/11/2026 Timer for the PS Vita frame profile.
+DECLARE_PERF_TIMER(Terrain_waterHandle)
 const WaterHandle* TerrainLogic::getWaterHandle( Real x, Real y )
 {
+	USE_PERF_TIMER(Terrain_waterHandle)
 	const WaterHandle *waterHandle = nullptr;
 	Real waterZ = 0.0f;
 	ICoord3D iLoc;

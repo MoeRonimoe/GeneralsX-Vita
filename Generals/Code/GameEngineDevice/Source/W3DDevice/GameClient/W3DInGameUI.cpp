@@ -30,6 +30,7 @@
 #include <stdlib.h>
 
 #include "Common/GlobalData.h"
+#include "Common/PerfTimer.h"
 #include "Common/ThingTemplate.h"
 #include "Common/ThingFactory.h"
 #include "GameLogic/TerrainLogic.h"
@@ -385,10 +386,20 @@ void W3DInGameUI::reset()
 //-------------------------------------------------------------------------------------------------
 /** Draw member for the W3D implementation of the game user interface */
 //-------------------------------------------------------------------------------------------------
+// GeneralsX @feature Claude 18/11/2026 Timers for the parts of drawing the user interface, read by the
+// PS Vita frame profile.
+DECLARE_PERF_TIMER(UI_preDraw)
+DECLARE_PERF_TIMER(UI_hints)
+DECLARE_PERF_TIMER(UI_postDraw)
+DECLARE_PERF_TIMER(UI_windows)
+DECLARE_PERF_TIMER(UI_postWindowDraw)
 void W3DInGameUI::draw()
 {
 	TheDisplay->beginBatch();
-	preDraw();
+	{
+		USE_PERF_TIMER(UI_preDraw)
+		preDraw();
+	}
 
 	// draw selection region if drag selecting
 	if( m_isDragSelecting )
@@ -398,6 +409,7 @@ void W3DInGameUI::draw()
 	/// @todo should the UI be iterating through views like this?
 	if( TheDisplay )
 	{
+		USE_PERF_TIMER(UI_hints)
 		View *view;
 
 		for( view = TheDisplay->getFirstView();
@@ -430,11 +442,20 @@ void W3DInGameUI::draw()
 	if (!g_UT_startTiming)
 #endif
 
-	postDraw();
+	{
+		USE_PERF_TIMER(UI_postDraw)
+		postDraw();
+	}
 
-	TheWindowManager->winRepaint();
+	{
+		USE_PERF_TIMER(UI_windows)
+		TheWindowManager->winRepaint();
+	}
 
-	postWindowDraw();
+	{
+		USE_PERF_TIMER(UI_postWindowDraw)
+		postWindowDraw();
+	}
 
 #ifdef EXTENDED_STATS
 	}

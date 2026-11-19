@@ -2360,8 +2360,11 @@ ExitInterface *Object::getObjectExitInterface() const
 //-------------------------------------------------------------------------------------------------
 /** Checks the object against trigger areas when the position changes. */
 //-------------------------------------------------------------------------------------------------
+// GeneralsX @feature Claude 18/11/2026 Timer for the PS Vita frame profile.
+DECLARE_PERF_TIMER(Object_triggerAreas)
 void Object::setTriggerAreaFlagsForChangeInPosition()
 {
+	USE_PERF_TIMER(Object_triggerAreas)
 	// projectiles cannot trigger areas. (jkmcd)
 	// neither can inert objects, like the radar ping, etc. (jkmcd)
 	if (isKindOf(KINDOF_PROJECTILE) || isKindOf(KINDOF_INERT))
