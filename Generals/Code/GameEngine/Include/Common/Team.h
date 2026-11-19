@@ -29,6 +29,7 @@
 #pragma once
 
 #include "Common/GameType.h"
+#include "Common/RelationMap.h"
 #include "Common/Snapshot.h"
 #include "Common/Thing.h"
 #include "GameLogic/Object.h"
@@ -42,7 +43,8 @@ typedef UnsignedInt TeamPrototypeID;
 #define TEAM_PROTOTYPE_ID_INVALID 0
 
 // ------------------------------------------------------------------------------------------------
-typedef std::hash_map< TeamID, Relationship, std::hash<TeamID>, std::equal_to<TeamID>/**/> TeamRelationMapType;
+// GeneralsX @performance Claude 19/11/2026 An array searched from the front instead of a hash map, see RelationMap.h.
+typedef RelationMap<TeamID> TeamRelationMapType;
 class TeamRelationMap : public MemoryPoolObject,
 												public Snapshot
 {

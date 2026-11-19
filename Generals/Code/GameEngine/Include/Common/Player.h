@@ -55,6 +55,7 @@
 #include "Common/Science.h"
 #include "Common/UnicodeString.h"
 #include "Common/NameKeyGenerator.h"
+#include "Common/RelationMap.h"
 #include "Common/Thing.h"
 #include "Common/STLTypedefs.h"
 #include "Common/ScoreKeeper.h"
@@ -148,7 +149,8 @@ struct SpecialPowerReadyTimerType
 
 
 // ------------------------------------------------------------------------------------------------
-typedef std::hash_map< PlayerIndex, Relationship, std::hash<PlayerIndex>, std::equal_to<PlayerIndex>/**/> PlayerRelationMapType;
+// GeneralsX @performance Claude 19/11/2026 An array searched from the front instead of a hash map, see RelationMap.h.
+typedef RelationMap<PlayerIndex> PlayerRelationMapType;
 class PlayerRelationMap : public MemoryPoolObject,
 													public Snapshot
 {
