@@ -809,6 +809,17 @@ void LookAtTranslator::setAnalogScroll(Real x, Real y)
 //-----------------------------------------------------------------------------
 void LookAtTranslator::resetModes()
 {
+	// GeneralsX @bugfix Claude 23/11/2026 Scrolling is ended properly here. Only clearing the flag left the
+	// tactical view's mouse lock on with nothing left to release it: when a script took the input away
+	// while the view was scrolling, the windows of the score screen got no clicks at all.
+	if (m_isScrolling)
+	{
+		stopScrolling();
+#if defined(__vita__)
+		fprintf(stderr, "[input] a script took the input away while the view was scrolling: scrolling ended\n");
+		fflush(stderr);
+#endif
+	}
 	m_isScrolling = FALSE;
 	m_isRotating = FALSE;
 	m_isPitching = FALSE;
