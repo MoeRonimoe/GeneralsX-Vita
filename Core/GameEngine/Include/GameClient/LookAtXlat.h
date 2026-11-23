@@ -56,6 +56,13 @@ public:
 
 	void resetModes(); //Used when disabling input, so when we reenable it we aren't stuck in a mode.
 
+	// GeneralsX @feature Claude 22/11/2026 Scrolling with an analog stick (the PS Vita's right stick): the
+	// platform's input says how far the stick is pushed, -1 to 1 on each axis (y downwards), every
+	// time it reads it. The view scrolls in proportion, as fast as with the arrow keys at full
+	// deflection. Unlike keys sent for the stick, this does not depend on the key bindings: Zero
+	// Hour binds the arrow keys to selecting the next unit.
+	void setAnalogScroll(Real x, Real y);
+
 private:
 	enum
 	{
@@ -66,7 +73,8 @@ private:
 		SCROLL_NONE = 0,
 		SCROLL_RMB,
 		SCROLL_KEY,
-		SCROLL_SCREENEDGE
+		SCROLL_SCREENEDGE,
+		SCROLL_ANALOG
 	};
 	ICoord2D m_anchor;
 	ICoord2D m_originalAnchor;
@@ -81,6 +89,7 @@ private:
 	DrawableID m_lastPlaneID;
 	ViewLocation m_viewLocation[ MAX_VIEW_LOCS ];
 	ScrollType m_scrollType;
+	Coord2D m_analogScroll;			// see setAnalogScroll()
 	ScreenEdgeScrollMode m_screenEdgeScrollMode;
 	UnsignedInt m_lastMouseMoveTimeMsec;				// real-time in milliseconds when mouse last moved
 

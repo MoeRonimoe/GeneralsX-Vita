@@ -33,6 +33,7 @@
 #include "GameClient/GameWindowManager.h"
 #include "GameClient/InGameUI.h"
 #include "GameClient/Keyboard.h"
+#include "GameClient/LookAtXlat.h"
 #include "GameClient/Mouse.h"
 #include "GameClient/SelectionInfo.h"
 #include "GameClient/View.h"
@@ -63,8 +64,6 @@ const Real STICK_DEAD_ZONE = 0.16f;
 // Pointer speed of the left stick at full deflection, in panel pixels per second.
 const Real POINTER_SPEED = 900.0f;
 
-// Deflection of the right stick (after the response curve) that counts as a held scroll key.
-const Real SCROLL_THRESHOLD = 0.2f;
 
 // Interval between wheel notches while a zoom direction is held.
 const UnsignedInt ZOOM_REPEAT_MS = 60;
@@ -105,9 +104,6 @@ SceUInt64 s_lastTouchStamp = 0;
 Real s_pointerX = VitaInput::SCREEN_WIDTH * 0.5f;
 Real s_pointerY = VitaInput::SCREEN_HEIGHT * 0.5f;
 
-// Scroll keys currently held by the right stick: up, down, left, right.
-Bool s_scrollHeld[4] = { FALSE, FALSE, FALSE, FALSE };
-const KeyDefType s_scrollKeys[4] = { KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT };
 
 UnsignedInt s_lastPollMs = 0;
 UnsignedInt s_lastZoomMs = 0;
@@ -532,24 +528,8 @@ void VitaInput::poll()
 		}
 	}
 
-	if (keyboard != nullptr)
-	{
-		const Real scrollX = readAxis(pad.rx);
-		const Real scrollY = readAxis(pad.ry);
-		const Bool wanted[4] =
-		{
-			scrollY < -SCROLL_THRESHOLD,
-			scrollY > SCROLL_THRESHOLD,
-			scrollX < -SCROLL_THRESHOLD,
-			scrollX > SCROLL_THRESHOLD
-		};
-		for (Int i = 0; i < 4; ++i)
-		{
-			if (wanted[i] != s_scrollHeld[i])
-			{
-				keyboard->addKeyEvent(s_scrollKeys[i], wanted[i]);
-				s_scrollHeld[i] = wanted[i];
-			}
-		}
-	}
+	// The right stick scrolls the view in proportion to how far it is pushed. It used to send the
+	// arrow keys, which scroll in the base game; Zero Hour binds them to selecting units.
+	if (TheLookAtTranslator != nullptr)
+		TheLookAtTranslator->setAnalogScroll(readAxis(pad.rx), readAxis(pad.ry));
 }

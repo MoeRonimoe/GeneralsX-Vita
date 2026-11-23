@@ -156,6 +156,7 @@ LookAtTranslator::LookAtTranslator() :
 	m_anchor.x = m_anchor.y = 0;
 	m_currentPos.x = m_currentPos.y = 0;
 	m_originalAnchor.x = m_originalAnchor.y = 0;
+	m_analogScroll.x = m_analogScroll.y = 0.0f;
 
 	OptionPreferences prefs;
 	m_screenEdgeScrollMode = prefs.getScreenEdgeScrollMode();
@@ -450,6 +451,19 @@ GameMessageDisposition LookAtTranslator::translateGameMessage(const GameMessage 
 		{
 			Coord2D offset = {0, 0};
 
+			// GeneralsX @feature Claude 22/11/2026 An analog stick starts and stops scrolling as the arrow keys
+			// do, and only in the game, see setAnalogScroll().
+			const Bool analogAllowed = TheInGameUI->getInputEnabled() && !(TheShell && TheShell->isShellActive());
+			const Bool analogWanted = analogAllowed && (m_analogScroll.x != 0.0f || m_analogScroll.y != 0.0f);
+			if (analogWanted && !m_isScrolling && !TheInGameUI->isSelecting())
+			{
+				setScrolling( SCROLL_ANALOG );
+			}
+			else if (!analogWanted && m_isScrolling && m_scrollType == SCROLL_ANALOG)
+			{
+				stopScrolling();
+			}
+
 			if (m_isScrolling && !TheInGameUI->isScrolling())
 			{
 				// If we've been forced to stop scrolling (script action?)
@@ -512,6 +526,12 @@ GameMessageDisposition LookAtTranslator::translateGameMessage(const GameMessage 
 						{
 							offset.x += TheGlobalData->m_horizontalScrollSpeedFactor * fpsRatio * SCROLL_AMT * TheGlobalData->m_keyboardScrollFactor;
 						}
+					}
+					break;
+				case SCROLL_ANALOG:
+					{
+						offset.x = TheGlobalData->m_horizontalScrollSpeedFactor * fpsRatio * SCROLL_AMT * TheGlobalData->m_keyboardScrollFactor * m_analogScroll.x;
+						offset.y = TheGlobalData->m_verticalScrollSpeedFactor * fpsRatio * SCROLL_AMT * TheGlobalData->m_keyboardScrollFactor * m_analogScroll.y;
 					}
 					break;
 				case SCROLL_SCREENEDGE:
@@ -780,6 +800,13 @@ GameMessageDisposition LookAtTranslator::translateGameMessage(const GameMessage 
 
 }
 
+void LookAtTranslator::setAnalogScroll(Real x, Real y)
+{
+	m_analogScroll.x = x;
+	m_analogScroll.y = y;
+}
+
+//-----------------------------------------------------------------------------
 void LookAtTranslator::resetModes()
 {
 	m_isScrolling = FALSE;
