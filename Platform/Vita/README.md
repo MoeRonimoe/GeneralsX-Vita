@@ -17,6 +17,13 @@ checked since they were last reported wrong. Music, sound effects and voices pla
 "Sound").** Everything behind that is unverified; expect it to fail
 and to need fixes guided by the log file and core dumps.
 
+**Zero Hour builds and runs as well (preset `vita-zh`).** Its menus and movies work, and
+the first missions of two campaigns were played to their end on a console, the first USA
+mission with its opening film and its train ride. Memory is what limits it: that mission
+takes the top of the 300 MB heap to 289 MB (see the notes at the end). The frame time work
+of the base game (tree batch, skipped drawables, sleepy update heap, relation arrays) has
+not been carried over.
+
 | Area | State |
 | --- | --- |
 | Engine, game logic, WW3D renderer | compile unchanged for ARM (Cortex-A9, 32 bit, hard float) |
@@ -26,7 +33,7 @@ and to need fixes guided by the log file and core dumps.
 | Audio | sound effects, speech and music through miniaudio (`Device/VitaAudioManager`, `Device/VitaAudioLoader`), behind the build option `VITA_AUDIO`; heard on a console, see "Sound" for what is still open |
 | Video (intro, campaign movies) | Bink through FFmpeg when `tools/build-ffmpeg.sh` has been run, see "Movies"; skipped without it |
 | Network play | sockets are wired up through newlib, untested |
-| Zero Hour | not built yet; only the base game target `g_generals` has a Vita package |
+| Zero Hour | target `z_generals` with a package of its own (title id `GENZ00001`, data in `ux0:data/GeneralsZH`); no online play, the NGMP code is left out |
 
 ## Layout
 
@@ -36,13 +43,13 @@ and to need fixes guided by the log file and core dumps.
 | `Device/` | `VitaGameEngine`, `VitaMouse`, `VitaKeyboard`, `VitaInput`, `VitaAudioManager` with `VitaAudioLoader`, and the silent audio and video stand-ins |
 | `Main/` | `main()`: heap size, CPU clocks, network start-up, working directory, command line |
 | `compat/` | the few POSIX functions newlib lacks on the Vita (`ioctl`, `getifaddrs`, `fnmatch`, `uname`, ...), the diagnostics written to the log, `VitaMachineTest`, which measures the console itself, and `VitaHelper`, a thread the game's thread shares loops with. `include/VitaD3D8Tags.h` is what the engine can tell the Direct3D layer about a resource |
-| `sce_sys/` | LiveArea images and the script that draws them |
+| `sce_sys/` | LiveArea images and the script that draws them; `sce_sys/zh/` the same for Zero Hour |
 | `tools/` | scripts that turn a core dump or the log of a failed run into function names; `tools/audiotest/` runs the sound's loading code on a PC, `tools/renderthread_test.cpp` the render thread's stream, `tools/helper_test.cpp` the helper thread, `tools/frustum_test.cpp` and `tools/matrix_test.cpp` the NEON code of the view tests and of the bones (with `tools/neon_on_pc/`, the intrinsics in plain C++), `tools/d3d8test/` the whole Direct3D layer against a stand-in for vitaGL; `tools/samples.py` and `tools/time_table.py` read what the measurements write |
 | `CMakeLists.txt` | the targets above and `vita_package()`, which produces the `.vpk` |
 | `FixMiniaudio.cmake` | makes the corrected copy of `miniaudio.h` that is compiled, see "Sound" |
 
-Outside this directory the port consists of `cmake/vita.cmake`, the `vita` preset in
-`CMakePresets.json` and small `__vita__` / `VITA` branches next to the existing Linux and
+Outside this directory the port consists of `cmake/vita.cmake`, the `vita` and `vita-zh`
+presets in `CMakePresets.json` and small `__vita__` / `VITA` branches next to the existing Linux and
 macOS ones.
 
 ## Building
@@ -56,7 +63,15 @@ cmake --preset vita
 cmake --build build/vita --target g_generals.vpk-vpk
 ```
 
-The package is written to `build/vita/Generals/Code/Main/g_generals.vpk`.
+The package is written to `build/vita/Generals/Code/Main/g_generals.vpk`. Zero Hour has a
+preset and a build directory of its own, and takes the same options:
+
+```sh
+cmake --preset vita-zh -DVITA_AUDIO=ON
+cmake --build build/vita-zh --target z_generals.vpk-vpk
+```
+
+Its package is written to `build/vita-zh/GeneralsMD/Code/Main/z_generals.vpk`.
 
 Two libraries are better built here than taken from the SDK, each by a script in `tools/`
 that puts them where the vita preset looks first; without them the game builds with the
@@ -109,6 +124,11 @@ Build options of interest (`cmake --preset vita -D<name>=<value>`):
    `Textures.big`, `W3D.big`, ...) to `ux0:data/Generals/`. The game data is not part of
    this repository and has to come from a copy you own.
 
+Zero Hour is installed the same way from `z_generals.vpk`, next to the base game: the
+contents of its directory (with `INIZH.big` and the folder `ZH_Generals`, which holds the
+base game's data it loads) go to `ux0:data/GeneralsZH/`. What is said below about
+`ux0:data/Generals/` then holds for that folder.
+
 The game writes its options, saved games and the log to `ux0:data/Generals/UserData/`.
 The log is `ux0:data/Generals/UserData/vita_log.txt`; it is the first thing to look at
 when something does not work. The log of the run before is kept next to it as
@@ -126,7 +146,7 @@ instead; the platform layer reads its switches for experiments that way:
 | `VITA_TOUCH_SNAP_RADIUS` | how far, in panel pixels, a tap may miss a unit and still count as a tap on it (default 24, 0 switches the help off) |
 | `VITA_D3D8_TOP_MIP_ONLY` | compressed textures are uploaded without their mip levels |
 | `VITA_NO_AUDIO` | a build with sound runs silent, to compare frame times |
-| `VITA_AUDIO_CACHE_MB` | memory for decoded sound effects (default 40) |
+| `VITA_AUDIO_CACHE_MB` | memory for decoded sound effects (default 40; less while the heap is low, see the notes at the end) |
 | `VITA_RENDER_THREAD` | `0` has the game's thread make the calls to vitaGL itself, as it did before there was a render thread (see "The render thread") |
 | `VITA_BUFFERED_READS` | large reads go through the C library's buffer again, a kilobyte per request (see the notes at the end) |
 | `VITA_SAMPLE` | in a measuring build (`VITA_CALL_PROFILE`): samples per second of the game's thread, written to `vita_samples.bin` at the end (see "Finding out where the time goes") |
@@ -459,7 +479,7 @@ While only the executable changes there is no need to reinstall the package: rep
 | Front touch | move the pointer and hold the left mouse button (tap to click, drag to select) |
 | Left stick | move the pointer |
 | Cross / Circle | left / right mouse button |
-| Right stick | scroll the map |
+| Right stick | scroll the map, the further it is pushed the faster |
 | D-pad up / down | zoom |
 | D-pad left / right | rotate the camera |
 | L / R | Ctrl / Shift |
@@ -868,6 +888,13 @@ calls vitaGL directly; that file does not include `VitaD3D8GL.h`.
   - Switching off the markers of units behind buildings (the option "Building Occlusion")
     made no difference: the time the scene spends in `flushOccludedObjectsIntoStencil()` is
     the drawing of the objects, which happens either way.
+  - Tried and taken out again: posing the animated models in the view before they are drawn,
+    shared between the game's thread and the helper thread (run82). The helper took most of
+    the models, and drawing them got 3.7 ms faster, but the posing before it took 3.4: when
+    the thread that draws a model has just posed it, the model is in its cache; posed by the
+    other core, it has to be fetched again. Work that hands its results to the game's thread
+    right away gains little from the helper; work whose results are not looked at soon after
+    (the skins, which go straight into a vertex buffer) does.
   - Together the calm stretches went from 43 to 46 ms per frame (22 to 23 fps) to about 34
     (29 to 30 fps), the opening battle from about 70 (14 fps) to 55 to 60 (17 to 18).
 - `lstrcpyn()` was mapped to `strncpy()` for all platforms that are not Windows, in
@@ -1026,3 +1053,36 @@ calls vitaGL directly; that file does not include `VitaD3D8GL.h`.
   so that buffer was copied over and over: an explosion cost more than 100 ms per frame
   in vitaGL alone. `DrawIndexedPrimitive()` now starts the arrays at the lowest vertex a
   call uses and moves the indices down to match (`RebaseIndices()`).
+- Zero Hour's first USA mission ran the 300 MB heap out on its train ride: a scripted camera
+  makes the terrain rebuild, which uploads about 20 MB in one frame, and the render thread's
+  stream holds what it was given until that frame has been shown. Three things give the
+  heap room now:
+  - Large textures with a single level let go of their system memory copy after the upload
+    (`Texture::ReleaseCopyIfUnneeded()`): 37 MB of copies became 21 to 23. vitaGL keeps such
+    a texture's bytes as they were handed to it, in rows that start every 8 pixels, so one
+    that the engine locks again is read back from vitaGL and keeps its copy from then on.
+    Textures with mip maps keep theirs, because vitaGL rearranges their pixels.
+  - What a frame may copy into the stream for uploads follows the room in the heap: always
+    4 MB, at most 16, and in between a sixth of what is free (`RenderThread::MayKeepUpload()`).
+    A fixed limit of 4 MB made camera moves wait for the render thread, up to 52 ms of a
+    frame of 171 ms (5.9 fps), because those upload up to 6.5 MB per frame.
+  - The decoded sound effects give way while less than 48 MB of the heap are free, down to
+    8 MB of them (`VitaAudioManager::updateEffectBudget()`).
+
+  That mission still takes the top of the heap to 289 MB, with 263 MB in use at its peak.
+  The terrain rebuild does its work twice in one frame (`initHeightData()`, then
+  `updateCenter()`) and costs about a second.
+- The cinematics are staged for the retail camera height. `setCameraHeightAboveGroundLimitsToDefault()`
+  scales the height limits for a screen wider than 4:3, and a script's final zoom is relative
+  to them, so on the console the camera of the rocket shot in Zero Hour's first USA mission
+  hung at 1820 instead of 1140: the rocket stopped in view at the end of its animation
+  instead of flying past the camera, and a hill showed through its cloud backdrop, a card
+  only ten units above the ground. The Vita builds use `PRESERVE_RETAIL_SCRIPTED_CAMERA` and
+  take that scale out of a scripted camera's height (`W3DView::m_scriptedHeightScale`). The
+  player's camera keeps it.
+- `LookAtTranslator::resetModes()`, which a script calls when it takes the input away, only
+  cleared the scrolling flag and left the tactical view's mouse lock on, with nothing left to
+  release it; the windows then get no input, which is how the score screen came to ignore
+  clicks. It ends the scrolling properly now, and logs an `[input]` line when it does. That
+  this was the cause on the console is likely but not shown: the run after the fix did not
+  scroll at that moment.
