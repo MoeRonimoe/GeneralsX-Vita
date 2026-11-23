@@ -65,6 +65,7 @@ struct TextureObject
 	bool generatedLevels = false;
 	uint64_t given = 0;				///< hash over the pixels handed over with the levels
 	std::vector<uint8_t> reserved;	///< levels that were only reserved; the layer fills them through vglGetTexDataPointer()
+	std::vector<uint8_t> stored;	///< the top level of an uncompressed texture, laid out as vitaGL does: rows start every 8 pixels
 	GLint minFilter = 0;
 	GLint magFilter = 0;
 	GLint wrapS = 0;
@@ -234,6 +235,7 @@ void StartImage(TextureObject &texture, GLenum format, int width, int height)
 	texture.generatedLevels = false;
 	texture.given = 0;
 	texture.reserved.clear();
+	texture.stored.clear();
 }
 
 //-----------------------------------------------------------------------------
@@ -526,7 +528,11 @@ void *vglGetTexDataPointer(GLenum)
 {
 	ENTER();
 	TextureObject *texture = BoundTexture(__func__);
-	return texture != nullptr && !texture->reserved.empty() ? texture->reserved.data() : nullptr;
+	if (texture == nullptr)
+		return nullptr;
+	if (!texture->reserved.empty())
+		return texture->reserved.data();
+	return texture->stored.empty() ? nullptr : texture->stored.data();
 }
 
 // Switches ---------------------------------------------------------------------
@@ -881,7 +887,19 @@ void glTexImage2D(GLenum, GLint level, GLint internalFormat, GLsizei width, GLsi
 	if (data == nullptr)
 		Error("pixels of an uncompressed texture without data");
 	else
-		texture->given = texture->given * 1099511628211ull + Hash(data, static_cast<size_t>(width) * height * BytesPerPixel(format, type));
+	{
+		const size_t bytesPerPixel = BytesPerPixel(format, type);
+		texture->given = texture->given * 1099511628211ull + Hash(data, static_cast<size_t>(width) * height * bytesPerPixel);
+
+		if (level == 0)
+		{
+			const size_t rowBytes = width * bytesPerPixel;
+			const size_t stride = ((static_cast<size_t>(width) + 7) & ~static_cast<size_t>(7)) * bytesPerPixel;
+			texture->stored.assign(stride * height, 0);
+			for (GLsizei y = 0; y < height; ++y)
+				memcpy(texture->stored.data() + y * stride, static_cast<const uint8_t *>(data) + y * rowBytes, rowBytes);
+		}
+	}
 }
 
 void glCompressedTexImage2D(GLenum, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLint, GLsizei imageSize, const void *data)
@@ -1107,6 +1125,13 @@ uint64_t now()
 MemoryState getMemoryState()
 {
 	return MemoryState();
+}
+
+size_t g_soundEffectBytes = 0;
+
+size_t getHeapRoom()
+{
+	return 128 * 1024 * 1024;
 }
 
 uint64_t takeTime(TimeSlot)

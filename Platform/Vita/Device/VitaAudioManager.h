@@ -90,6 +90,7 @@ private:
 	VitaSound *makeEffectSound(VitaAudioEffect *effect, ma_uint32 flags, ma_sound_group *group);
 	Bool resolveStandIn(ma_sound *&sound);
 	void discardSound(ma_sound *sound);
+	void updateEffectBudget();
 	void trimEffects();
 	void reportLoading();
 
@@ -107,6 +108,8 @@ private:
 	UnsignedInt m_mixSequence;
 
 	size_t m_effectBudget;		///< how much memory the decoded effects may take
+	size_t m_effectBudgetNow;	///< as much of it as the heap allows them now, see updateEffectBudget()
+	uint64_t m_lastHeapCheck;	///< when the heap was last looked at for that
 	Bool m_effectsGrew;			///< effects have been added since the budget was last looked at
 
 	// The music track that was started last and how often it has run through; scripts wait for that.

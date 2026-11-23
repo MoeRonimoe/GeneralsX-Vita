@@ -152,7 +152,15 @@ private:
 
 	bool EnsureLevelData(UINT level);
 	void UploadCompressed();
-	void UploadUncompressed();
+	bool UploadUncompressed();
+
+	/// After an upload: lets go of the system memory copy of a texture that is unlikely to be
+	/// locked again, see the definition.
+	void ReleaseCopyIfUnneeded();
+
+	/// Fills a new copy of the top level with what vitaGL has, for a texture that let go of
+	/// its copy and is locked again.
+	void ReadBackTopLevel();
 
 	/// Hands the pixels of the top level to the render thread without waiting for it.
 	/// False if this upload has to be waited for.
@@ -168,6 +176,8 @@ private:
 
 	GLuint m_glTexture;
 	bool m_dirty;			///< system memory differs from the GL texture
+	bool m_copyReleased;	///< the top level's copy was let go of after its upload
+	bool m_keepsCopy;		///< was locked again after that, and keeps its copy from then on
 	SamplerState *m_sampler;
 };
 

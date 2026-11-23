@@ -67,6 +67,25 @@ extern bool g_queueing;
 /// Data up to this size is copied into the stream; a call with more is waited for.
 enum { MAX_KEPT_BYTES = 1024 * 1024 };
 
+/// What a frame may always copy into the stream for uploads, and what it may at most.
+/// Between the two it is a sixth of the room the heap has. See MayKeepUpload().
+enum
+{
+	MIN_KEPT_UPLOADS_PER_FRAME = 4 * 1024 * 1024,
+	MAX_KEPT_UPLOADS_PER_FRAME = 16 * 1024 * 1024
+};
+
+/// Whether an upload of this many bytes (a buffer's vertices, a texture's pixels) may be
+/// copied into the stream; if it may, it counts against what the frame may keep. The stream
+/// holds what it was given until the frame has been shown, so a frame that uploaded a lot
+/// took as much again from the heap: Zero Hour's terrain, rebuilt for a scripted camera and
+/// uploaded twice in that frame, came to 20 MB, and the heap ran out. An upload that is
+/// waited for waits for everything the render thread has not drawn yet, though, and a
+/// scripted camera moving over a large terrain uploads up to 6.5 MB on every frame: with a
+/// fixed limit of 4 MB the game spent up to 50 ms of a frame waiting. So the limit is only
+/// tight while the heap is.
+bool MayKeepUpload(size_t size);
+
 /// Starts the thread, unless the environment says not to ("+VITA_RENDER_THREAD=0" in
 /// vita_args.txt). Without the thread every call is made where it is written.
 bool Start();

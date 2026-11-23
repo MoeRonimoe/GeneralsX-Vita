@@ -29,6 +29,8 @@
 
 #include "VitaD3D8RenderThread.h"
 
+#include "VitaDiagnostics.h"
+
 #include <pthread.h>
 
 #include <atomic>
@@ -92,6 +94,7 @@ const uint32_t PUBLISH_AFTER_ENTRIES = 256;
 // THE GAME'S THREAD ------------------------------------------------------------
 Block *s_writeBlock = nullptr;	///< the block g_writer writes into
 uint32_t s_framesWritten = 0;
+size_t s_uploadBytesKept = 0;	///< uploads copied into the stream for the frame being written
 Waits s_waits = {};
 
 // BOTH -----------------------------------------------------------------------
@@ -388,6 +391,30 @@ const void *Keep(const void *data, size_t size)
 }
 
 //-----------------------------------------------------------------------------
+bool MayKeepUpload(size_t size)
+{
+	// Without the thread nothing is kept: the call is made where it is written.
+	if (!g_queueing)
+		return true;
+
+	if (size > MAX_KEPT_BYTES)
+		return false;
+
+	const size_t kept = s_uploadBytesKept + size;
+	if (kept > MIN_KEPT_UPLOADS_PER_FRAME)
+	{
+		// The stream holds two frames at a time, and what is left of the heap is also what
+		// the game's own allocations of such a frame come from.
+		const size_t HEAP_SHARE = 6;
+		if (kept > MAX_KEPT_UPLOADS_PER_FRAME || kept > VitaDiagnostics::getHeapRoom() / HEAP_SHARE)
+			return false;
+	}
+
+	s_uploadBytesKept = kept;
+	return true;
+}
+
+//-----------------------------------------------------------------------------
 void *Reserve(size_t size)
 {
 	if (!g_queueing || size == 0)
@@ -441,6 +468,7 @@ void RunSync(void (*function)(void *context), void *context)
 //-----------------------------------------------------------------------------
 void EndFrame()
 {
+	s_uploadBytesKept = 0;
 	if (!g_queueing)
 		return;
 

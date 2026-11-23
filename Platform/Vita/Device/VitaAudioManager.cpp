@@ -38,6 +38,7 @@
 #include <psp2/audioout.h>
 #include <psp2/kernel/threadmgr.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -98,12 +99,14 @@ const UnsignedInt MIXING_REPORT_BLOCKS = 480;
 
 // With "+VITA_OUTPUT_SOUND=1" in vita_args.txt the first 30 seconds of what goes to the speakers are
 // written to a WAV file, to be compared with what the same sounds give on a PC.
-const char *const OUTPUT_SOUND_PATH = "ux0:data/Generals/UserData/output_sound.wav";
+const char *const OUTPUT_SOUND_NAME = "output_sound.wav";
 const UnsignedInt OUTPUT_SOUND_SECONDS = 30;
 
 void writeOutputSound(const std::vector<ma_int16> &recording)
 {
-	FILE *file = fopen(OUTPUT_SOUND_PATH, "wb");
+	char soundPath[256];
+	snprintf(soundPath, sizeof(soundPath), "%s/%s", VitaDiagnostics::g_userDataPath, OUTPUT_SOUND_NAME);
+	FILE *file = fopen(soundPath, "wb");
 	if (file == nullptr)
 		return;
 
@@ -130,7 +133,7 @@ void writeOutputSound(const std::vector<ma_int16> &recording)
 	fwrite(&dataBytes, 4, 1, file);
 	fwrite(recording.data(), sizeof(ma_int16), recording.size(), file);
 	fclose(file);
-	fprintf(stderr, "[audio] the first %u seconds of the output written to %s\n", static_cast<unsigned int>(OUTPUT_SOUND_SECONDS), OUTPUT_SOUND_PATH);
+	fprintf(stderr, "[audio] the first %u seconds of the output written to %s\n", static_cast<unsigned int>(OUTPUT_SOUND_SECONDS), soundPath);
 	fflush(stderr);
 }
 const uint64_t LOADING_REPORT_US = 10 * 1000 * 1000;
@@ -138,6 +141,20 @@ const uint64_t LOADING_REPORT_US = 10 * 1000 * 1000;
 // The decoded samples of the sound effects that are kept in memory. A mission of the
 // game plays some 350 different ones, which take 30 MB.
 const size_t DEFAULT_EFFECT_BUDGET_MB = 40;
+
+// The decoded effects give way to the rest of the game when the heap runs short: while it has
+// less than this left, their budget shrinks by what is missing. Zero Hour's campaign filled
+// the heap to the last few megabytes, and rebuilding its terrain for a scripted camera needs
+// some twenty for a moment.
+const size_t HEAP_ROOM_WANTED_MB = 48;
+
+// The effects keep this much however short the heap is: the sounds of a battle.
+const size_t MIN_EFFECT_BUDGET_MB = 8;
+
+// How often the heap is looked at for that. Looking walks the allocator's free lists.
+const uint64_t HEAP_CHECK_US = 1000 * 1000;
+
+const size_t MEGABYTE = 1024 * 1024;
 
 // A sound effect whose file was not in memory when it was asked for starts when the file
 // is. One that would start later than this is not played at all: a shot that is heard a
@@ -218,7 +235,9 @@ VitaAudioManager::VitaAudioManager() :
 	m_outputThread(-1),
 	m_stopOutput(FALSE),
 	m_mixSequence(0),
-	m_effectBudget(DEFAULT_EFFECT_BUDGET_MB * 1024 * 1024),
+	m_effectBudget(DEFAULT_EFFECT_BUDGET_MB * MEGABYTE),
+	m_effectBudgetNow(DEFAULT_EFFECT_BUDGET_MB * MEGABYTE),
+	m_lastHeapCheck(0),
 	m_effectsGrew(FALSE),
 	m_musicRounds(0),
 	m_lateSounds(0),
@@ -230,7 +249,8 @@ VitaAudioManager::VitaAudioManager() :
 	// "+VITA_AUDIO_CACHE_MB=n" in vita_args.txt.
 	const char *budget = getenv("VITA_AUDIO_CACHE_MB");
 	if (budget != nullptr && atoi(budget) > 0)
-		m_effectBudget = static_cast<size_t>(atoi(budget)) * 1024 * 1024;
+		m_effectBudget = static_cast<size_t>(atoi(budget)) * MEGABYTE;
+	m_effectBudgetNow = m_effectBudget;
 }
 
 //-----------------------------------------------------------------------------
@@ -807,11 +827,48 @@ void VitaAudioManager::releaseMiniAudioHandles(PlayingAudio *release)
 }
 
 //-----------------------------------------------------------------------------
+/// Once a second: how much the decoded effects may take, given the room the heap has left
+/// (HEAP_ROOM_WANTED_MB). It is the whole budget while the heap has room, and shrinks by what
+/// is missing each time it is looked at while it has not.
+void VitaAudioManager::updateEffectBudget()
+{
+	const size_t effectBytes = m_loader.getEffectBytes();
+	VitaDiagnostics::g_soundEffectBytes = effectBytes;
+
+	const size_t wanted = HEAP_ROOM_WANTED_MB * MEGABYTE;
+	const size_t room = VitaDiagnostics::getHeapRoom();
+	if (room >= wanted)
+	{
+		m_effectBudgetNow = m_effectBudget;
+		return;
+	}
+
+	const size_t missing = wanted - room;
+	const size_t least = std::min(m_effectBudget, MIN_EFFECT_BUDGET_MB * MEGABYTE);
+	const size_t budget = effectBytes > missing ? effectBytes - missing : 0;
+	m_effectBudgetNow = std::max(least, std::min(budget, m_effectBudget));
+
+	if (effectBytes > m_effectBudgetNow)
+	{
+		// While the heap stays just short, a little is let go of nearly every second; the log
+		// only says so when it is more.
+		const size_t LOGGED_TRIM = 2 * MEGABYTE;
+		if (effectBytes - m_effectBudgetNow >= LOGGED_TRIM)
+		{
+			fprintf(stderr, "[audio] the heap has %.1f MB left: the decoded sound effects give way, %.1f MB of them may stay\n",
+				room / static_cast<double>(MEGABYTE), m_effectBudgetNow / static_cast<double>(MEGABYTE));
+			fflush(stderr);
+		}
+		m_effectsGrew = TRUE;
+	}
+}
+
+//-----------------------------------------------------------------------------
 /// Lets go of the decoded effects that were used longest ago when there are too many.
 void VitaAudioManager::trimEffects()
 {
 	m_effectsGrew = FALSE;
-	if (m_loader.getEffectBytes() <= m_effectBudget)
+	if (m_loader.getEffectBytes() <= m_effectBudgetNow)
 		return;
 
 	std::vector<const VitaAudioEffect *> inUse;
@@ -830,7 +887,8 @@ void VitaAudioManager::trimEffects()
 		}
 	}
 
-	m_loader.trimEffects(m_effectBudget, inUse);
+	m_loader.trimEffects(m_effectBudgetNow, inUse);
+	VitaDiagnostics::g_soundEffectBytes = m_loader.getEffectBytes();
 }
 
 //-----------------------------------------------------------------------------
@@ -885,6 +943,13 @@ void VitaAudioManager::processPlayingList()
 		// The sound of a movie does not go through the mixer.
 		if (TheVideoPlayer != nullptr)
 			TheVideoPlayer->setVolume(getVolume(AudioAffect_Speech));
+	}
+
+	const uint64_t now = VitaDiagnostics::now();
+	if (now - m_lastHeapCheck >= HEAP_CHECK_US)
+	{
+		m_lastHeapCheck = now;
+		updateEffectBudget();
 	}
 
 	if (m_effectsGrew)

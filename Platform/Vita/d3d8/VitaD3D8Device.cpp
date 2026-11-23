@@ -284,9 +284,9 @@ void LogMemory(const char *label)
 	const VitaDiagnostics::MemoryState state = VitaDiagnostics::getMemoryState();
 	const ResourceMemory resources = GetResourceMemory();
 
-	Log("memory %s: heap %.1f of %.1f MB in use, of that texture copies %.1f MB and buffer copies %.1f MB; vitaGL free: vram %.1f of %.1f MB, ram %.1f of %.1f MB, phycont %.1f of %.1f MB",
+	Log("memory %s: heap %.1f of %.1f MB in use, of that texture copies %.1f MB, buffer copies %.1f MB and sound effects %.1f MB; vitaGL free: vram %.1f of %.1f MB, ram %.1f of %.1f MB, phycont %.1f of %.1f MB",
 		label, state.heapUsed / megabyte, state.heapLimit / megabyte,
-		resources.textureBytes / megabyte, resources.bufferBytes / megabyte,
+		resources.textureBytes / megabyte, resources.bufferBytes / megabyte, VitaDiagnostics::g_soundEffectBytes / megabyte,
 		vglMemFree(VGL_MEM_VRAM) / megabyte, vglMemTotal(VGL_MEM_VRAM) / megabyte,
 		vglMemFree(VGL_MEM_RAM) / megabyte, vglMemTotal(VGL_MEM_RAM) / megabyte,
 		vglMemFree(VGL_MEM_PHYCONT) / megabyte, vglMemTotal(VGL_MEM_PHYCONT) / megabyte);

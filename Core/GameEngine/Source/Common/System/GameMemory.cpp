@@ -54,6 +54,10 @@
 #include "Common/PerfTimer.h"
 #ifdef MEMORYPOOL_DEBUG
 #include "GameClient/ClientRandomValue.h"
+
+#if defined(__vita__)
+#include <VitaDiagnostics.h>
+#endif
 #endif
 #ifdef MEMORYPOOL_STACKTRACE
 	#include "Common/StackDump.h"
@@ -240,7 +244,19 @@ static void* sysAllocateDoNotZero(Int numBytes)
 {
 	void* p = ::GlobalAlloc(GMEM_FIXED, numBytes);
 	if (!p)
+	{
+#if defined(__vita__)
+		// GeneralsX @feature Claude 22/11/2026 On the PS Vita the heap is all the memory the engine has;
+		// the log says how large the request was and whether the heap was full or broken up.
+		VitaDiagnostics::logFailedAllocation(static_cast<size_t>(numBytes));
+#endif
 		throw ERROR_OUT_OF_MEMORY;
+	}
+#if defined(__vita__) && defined(VITA_FRAME_PROFILE)
+	// GeneralsX @feature Claude 22/11/2026 The measuring build logs where the large blocks come from.
+	if (numBytes >= 4 * 1024 * 1024)
+		VitaDiagnostics::logLargeAllocation(static_cast<size_t>(numBytes));
+#endif
 #ifdef MEMORYPOOL_DEBUG
 	{
 		USE_PERF_TIMER(MemoryPoolDebugging)

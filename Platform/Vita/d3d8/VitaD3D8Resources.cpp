@@ -77,6 +77,10 @@ const UINT UPLOAD_SCRATCH_KEEP = 1024 * 1024;
 // size; an upload of more is waited for. 512 x 512 pixels of four bytes fit.
 const UINT MAX_PIXELS_SENT_LATER = 1024 * 1024;
 
+// The smallest copy a texture lets go of after its upload. The textures written again and
+// again (the shroud, the radar, text) are smaller.
+const UINT MIN_RELEASED_COPY = 256 * 1024;
+
 uint8_t *GetUploadScratch(UINT size)
 {
 	if (size > s_uploadScratchSize)
@@ -185,6 +189,8 @@ Texture::Texture() :
 	m_levelCount(0),
 	m_glTexture(0),
 	m_dirty(false),
+	m_copyReleased(false),
+	m_keepsCopy(false),
 	m_sampler(static_cast<SamplerState *>(malloc(sizeof(SamplerState))))
 {
 	memset(m_levels, 0, sizeof(m_levels));
@@ -325,6 +331,28 @@ bool Texture::EnsureLevelData(UINT level)
 		return false;
 
 	s_resourceMemory.textureBytes += target.size;
+
+	if (level == 0 && m_copyReleased)
+	{
+		ReadBackTopLevel();
+		m_copyReleased = false;
+		m_keepsCopy = true;
+	}
+
+	// For the log: the large copies, which make up most of what the textures take of the heap.
+	// Those of compressed textures go once they are uploaded, the others stay.
+	const UINT LARGE_TEXTURE_COPY = 1024 * 1024;
+	const int MAX_LOGGED_TEXTURE_COPIES = 64;
+	static int logged = 0;
+	if (target.size >= LARGE_TEXTURE_COPY && logged < MAX_LOGGED_TEXTURE_COPIES)
+	{
+		++logged;
+		Log("texture copy of %.1f MB: level %u of %u, %ux%u of format %u, usage 0x%x, %s; texture copies now %.1f MB",
+			target.size / (1024.0 * 1024.0), static_cast<unsigned>(level), static_cast<unsigned>(m_levelCount),
+			static_cast<unsigned>(target.width), static_cast<unsigned>(target.height), static_cast<unsigned>(m_d3dFormat),
+			static_cast<unsigned>(m_usage), m_format->transfer == TRANSFER_COMPRESSED || m_levelCount == 1 ? "may go after the upload" : "kept",
+			s_resourceMemory.textureBytes / (1024.0 * 1024.0));
+	}
 	return true;
 }
 
@@ -388,7 +416,14 @@ HRESULT STDMETHODCALLTYPE Texture::AddDirtyRect(const RECT *dirty_rect)
 //-----------------------------------------------------------------------------
 GLuint Texture::Realize()
 {
-	if (m_dirty && m_levels[0].data != nullptr && !ReplacePixelsLater())
+	if (!m_dirty || m_levels[0].data == nullptr)
+	{
+		m_dirty = false;
+		return m_glTexture;
+	}
+
+	bool uploaded = ReplacePixelsLater();
+	if (!uploaded)
 	{
 		// For the log: which uploads are still waited for.
 		FrameStatistics &statistics = g_frameStatistics;
@@ -404,14 +439,14 @@ GLuint Texture::Realize()
 		// An upload reads the pixels where the engine left them, asks vitaGL where it put
 		// the texture and writes there. With a render thread, that thread does all of it
 		// while this one waits.
-		RenderThread::Sync([this]
+		RenderThread::Sync([this, &uploaded]
 		{
 			const uint64_t start = VitaDiagnostics::profileStart();
 
 			if (m_format->transfer == TRANSFER_COMPRESSED)
 				UploadCompressed();
 			else if (m_format->transfer != TRANSFER_NONE)
-				UploadUncompressed();
+				uploaded = UploadUncompressed();
 
 			++g_frameStatistics.textureUploads;
 			if (start != 0)
@@ -426,7 +461,85 @@ GLuint Texture::Realize()
 	}
 
 	m_dirty = false;
+	if (uploaded)
+		ReleaseCopyIfUnneeded();
 	return m_glTexture;
+}
+
+//-----------------------------------------------------------------------------
+/// The copies of the large uncompressed textures were most of what the textures took of the
+/// heap, 30 to 40 MB in a mission of Zero Hour: the interface's 512 x 512 sheets and the
+/// 1024 x 1024 pictures, which the engine loads from their files, uploads and never locks
+/// again. vitaGL keeps the pixels of such a texture as they were handed to it, one row after
+/// the other, so the copy can go once they are uploaded. The engine does lock some of these
+/// textures again (to tint a model in its owner's color, for one), and gets them back from
+/// vitaGL then; a texture that was locked again keeps its copy from then on, so that one
+/// written to again and again is not read back again and again.
+///
+/// Textures with mip maps keep theirs: vitaGL rearranges their pixels for the GPU when it
+/// builds the lower levels.
+void Texture::ReleaseCopyIfUnneeded()
+{
+	Level &top = m_levels[0];
+	if (m_keepsCopy || m_levelCount != 1 || top.data == nullptr || top.locked || top.size < MIN_RELEASED_COPY)
+		return;
+
+	if (m_pool == D3DPOOL_SYSTEMMEM || m_pool == D3DPOOL_SCRATCH || (m_usage & (D3DUSAGE_DYNAMIC | D3DUSAGE_RENDERTARGET)) != 0)
+		return;
+
+	// Only where vitaGL keeps the bytes it was given: what it is handed is the copy itself,
+	// or the copy with the unused alpha of X8R8G8B8 made opaque.
+	const FormatInfo &upload = GetUploadFormat(*m_format, false);
+	if ((upload.transfer != TRANSFER_DIRECT && upload.transfer != TRANSFER_XRGB8888) || upload.uploadBytesPerPixel != m_format->bytesPerPixel)
+		return;
+
+	FreeLevelData(top.data, top.size);
+	m_copyReleased = true;
+}
+
+//-----------------------------------------------------------------------------
+void Texture::ReadBackTopLevel()
+{
+	Level &top = m_levels[0];
+	const UINT bytesPerPixel = GetUploadFormat(*m_format, false).uploadBytesPerPixel;
+	const UINT rowBytes = top.width * bytesPerPixel;
+
+	// vitaGL's rows start every 8 pixels (gpu_alloc_texture).
+	const UINT stride = ((top.width + 7) & ~7u) * bytesPerPixel;
+
+	uint8_t *const destination = top.data;
+	const UINT pitch = top.pitch;
+	const UINT height = top.height;
+	const GLuint glTexture = m_glTexture;
+	bool found = false;
+
+	// The render thread makes the upload first if it has not got to it yet.
+	RenderThread::Sync([destination, pitch, rowBytes, stride, height, glTexture, &found]
+	{
+		glBindTexture(GL_TEXTURE_2D, glTexture);
+		const uint8_t *source = static_cast<const uint8_t *>(vglGetTexDataPointer(GL_TEXTURE_2D));
+		if (source != nullptr)
+		{
+			for (UINT y = 0; y < height; ++y)
+				memcpy(destination + y * pitch, source + y * stride, rowBytes);
+			found = true;
+		}
+
+		// The texture is now bound to the texture unit that happened to be active.
+		Device *device = VitaD3D8::GetDevice();
+		if (device != nullptr)
+			device->NoteTextureUpload();
+	});
+
+	static int logged = 0;
+	const int MAX_LOGGED_READ_BACKS = 32;
+	if (logged < MAX_LOGGED_READ_BACKS)
+	{
+		++logged;
+		Log("a %ux%u texture of format %u was locked again after its copy was let go of: %s",
+			static_cast<unsigned>(top.width), static_cast<unsigned>(top.height), static_cast<unsigned>(m_d3dFormat),
+			found ? "read back from vitaGL, it keeps its copy from now on" : "vitaGL has no pixels for it");
+	}
 }
 
 //-----------------------------------------------------------------------------
@@ -449,7 +562,7 @@ bool Texture::ReplacePixelsLater()
 	const FormatInfo &upload = GetUploadFormat(*m_format, m_levelCount > 1);
 	const UINT uploadPitch = level.width * upload.uploadBytesPerPixel;
 	const UINT size = uploadPitch * level.height;
-	if (size > MAX_PIXELS_SENT_LATER)
+	if (size > MAX_PIXELS_SENT_LATER || !RenderThread::MayKeepUpload(size))
 		return false;
 
 	// A texture vitaGL does not have yet needs a name. The game makes two new textures per
@@ -576,7 +689,7 @@ void Texture::UploadCompressed()
 }
 
 //-----------------------------------------------------------------------------
-void Texture::UploadUncompressed()
+bool Texture::UploadUncompressed()
 {
 	if (m_glTexture == 0)
 		glGenTextures(1, &m_glTexture);
@@ -592,7 +705,7 @@ void Texture::UploadUncompressed()
 		const UINT uploadPitch = level.width * upload.uploadBytesPerPixel;
 		uint8_t *scratch = GetUploadScratch(uploadPitch * level.height);
 		if (scratch == nullptr)
-			return;
+			return false;
 
 		ConvertPixels(upload, level.data, level.pitch, scratch, uploadPitch, level.width, level.height);
 		pixels = scratch;
@@ -608,6 +721,7 @@ void Texture::UploadUncompressed()
 		glGenerateMipmap(GL_TEXTURE_2D);
 
 	TrimUploadScratch();
+	return true;
 }
 
 ///////////////////////////////////////////////////////////////////////////////

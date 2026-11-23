@@ -17,6 +17,10 @@ struct MemoryState
 
 MemoryState getMemoryState();
 
+size_t getHeapRoom();
+
+extern size_t g_soundEffectBytes;
+
 enum TimeSlot
 {
 	TIME_GAME_LOGIC,

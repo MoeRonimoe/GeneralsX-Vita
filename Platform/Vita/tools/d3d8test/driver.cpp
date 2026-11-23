@@ -28,6 +28,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 namespace
 {
@@ -902,6 +903,81 @@ void DrawFromMemory()
 }
 
 //-----------------------------------------------------------------------------
+/// A large texture without mip maps lets go of its copy once it is uploaded. Locked again, it
+/// has to hold what it held, in any format this applies to and with rows that vitaGL pads.
+void CheckReleasedCopies()
+{
+	static const D3DFORMAT formats[] =
+	{
+		D3DFMT_A8R8G8B8, D3DFMT_X8R8G8B8, D3DFMT_R5G6B5, D3DFMT_R8G8B8, D3DFMT_L8, D3DFMT_A8L8
+	};
+	static const UINT sizes[][2] = { { 604, 512 }, { 1024, 1024 } };
+
+	struct ScreenVertex
+	{
+		float x, y, z, rhw;
+		DWORD color;
+		float u, v;
+	};
+	const ScreenVertex vertices[3] =
+	{
+		{ 0.0f, 0.0f, 0.5f, 1.0f, 0xFFFFFFFF, 0.0f, 0.0f },
+		{ 8.0f, 0.0f, 0.5f, 1.0f, 0xFFFFFFFF, 1.0f, 0.0f },
+		{ 0.0f, 8.0f, 0.5f, 1.0f, 0xFFFFFFFF, 0.0f, 1.0f }
+	};
+
+	s_device->BeginScene();
+	s_device->SetVertexShader(SCREEN_FORMAT);
+
+	for (D3DFORMAT format : formats)
+	{
+		for (const UINT *size : sizes)
+		{
+			IDirect3DTexture8 *texture = nullptr;
+			if (FAILED(s_device->CreateTexture(size[0], size[1], 1, 0, format, D3DPOOL_MANAGED, &texture)) || texture == nullptr)
+			{
+				Mismatch("a texture for the released copies could not be made");
+				continue;
+			}
+
+			D3DSURFACE_DESC description;
+			D3DLOCKED_RECT locked;
+			texture->GetLevelDesc(0, &description);
+			texture->LockRect(0, &locked, nullptr, 0);
+			FillRandom(locked.pBits, description.Size);
+			std::vector<uint8_t> expected(static_cast<const uint8_t *>(locked.pBits), static_cast<const uint8_t *>(locked.pBits) + description.Size);
+			const UINT pitch = static_cast<UINT>(locked.Pitch);
+			texture->UnlockRect(0);
+
+			// Drawing with it uploads it.
+			s_device->SetTexture(0, texture);
+			s_device->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, vertices, sizeof(ScreenVertex));
+
+			if (FAILED(texture->LockRect(0, &locked, nullptr, D3DLOCK_READONLY)) || static_cast<UINT>(locked.Pitch) != pitch)
+			{
+				Mismatch("a texture that let go of its copy could not be locked");
+			}
+			else
+			{
+				// X8R8G8B8 comes back with its unused byte opaque.
+				const uint8_t *read = static_cast<const uint8_t *>(locked.pBits);
+				bool same = true;
+				for (size_t i = 0; i < expected.size() && same; ++i)
+					same = read[i] == expected[i] || (format == D3DFMT_X8R8G8B8 && i % 4 == 3);
+				if (!same)
+					Mismatch("a texture read back from vitaGL differs from what was written");
+			}
+			texture->UnlockRect(0);
+
+			s_device->SetTexture(0, nullptr);
+			texture->Release();
+		}
+	}
+
+	s_device->EndScene();
+}
+
+//-----------------------------------------------------------------------------
 void Clear(UINT width, UINT height)
 {
 	const DWORD flags = D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER | (Pick(3) == 0 ? D3DCLEAR_STENCIL : 0);
@@ -1098,6 +1174,7 @@ int main(int argc, char **argv)
 	for (UINT i = 0; i < MESH_BUFFER_COUNT; ++i)
 		MakeMeshBuffer(s_meshBuffers[i], i);
 	MakeDynamicBuffers();
+	CheckReleasedCopies();
 
 	UINT width = presentation.BackBufferWidth;
 	UINT height = presentation.BackBufferHeight;

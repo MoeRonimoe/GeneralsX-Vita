@@ -172,10 +172,11 @@ inline void CompressedTexImage2D(GLenum target, GLint level, GLenum internalForm
 
 //-----------------------------------------------------------------------------
 // The engine changes parts of its buffers while it draws (the terrain, when the view
-// moves), so these are not waited for unless they are large.
+// moves), so these are not waited for unless they are large or the frame has had its
+// share of the stream for uploads (RenderThread::MayKeepUpload()).
 inline void BufferData(GLenum target, GLsizei size, const GLvoid *data, GLenum usage)
 {
-	if (RenderThread::g_queueing && data != nullptr && static_cast<size_t>(size) > RenderThread::MAX_KEPT_BYTES)
+	if (RenderThread::g_queueing && data != nullptr && !RenderThread::MayKeepUpload(static_cast<size_t>(size)))
 	{
 		RenderThread::Sync([=] { ::glBufferData(target, size, data, usage); });
 		return;
@@ -186,7 +187,7 @@ inline void BufferData(GLenum target, GLsizei size, const GLvoid *data, GLenum u
 
 inline void BufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const void *data)
 {
-	if (RenderThread::g_queueing && data != nullptr && static_cast<size_t>(size) > RenderThread::MAX_KEPT_BYTES)
+	if (RenderThread::g_queueing && data != nullptr && !RenderThread::MayKeepUpload(static_cast<size_t>(size)))
 	{
 		RenderThread::Sync([=] { ::glBufferSubData(target, offset, size, data); });
 		return;
