@@ -495,6 +495,16 @@ void MeshClass::Scale(float scalex, float scaley, float scalez)
  * HISTORY:                                                                                    *
  *   3/4/2001   gth : Created.                                                                 *
  *=============================================================================================*/
+void MeshClass::Compose_Deformed_Vertex_Buffer(
+	VertexFormatXYZNDUV2* verts,
+	const Vector2* uv0,
+	const Vector2* uv1,
+	const unsigned* diffuse)
+{
+	WWASSERT(Model->Get_Flag(MeshGeometryClass::SKIN));
+	Model->compose_deformed_vertex_buffer(verts,uv0,uv1,diffuse,Container->Get_HTree());
+}
+
 void	MeshClass::Get_Deformed_Vertices(Vector3 *dst_vert, Vector3 *dst_norm)
 {
 	WWASSERT(Model->Get_Flag(MeshGeometryClass::SKIN));

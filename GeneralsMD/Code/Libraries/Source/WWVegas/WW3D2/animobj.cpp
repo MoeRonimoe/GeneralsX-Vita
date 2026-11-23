@@ -692,8 +692,12 @@ const Matrix3D &	Animatable3DObjClass::Get_Bone_Transform(int boneindex)
  *=============================================================================================*/
 void Animatable3DObjClass::Capture_Bone(int boneindex)
 {
-	if (HTree) {
+	// GeneralsX @bugfix Claude 22/11/2026 As in the base game: a captured bone leaves the animation, which
+	// changes the hierarchy. A bone that is captured already changes nothing: the game captures the
+	// bones of its turrets and gun barrels again on every frame.
+	if (HTree && !HTree->Is_Bone_Captured(boneindex)) {
 		HTree->Capture_Bone(boneindex);
+		Set_Hierarchy_Valid(false);
 	}
 }
 
@@ -714,6 +718,8 @@ void Animatable3DObjClass::Release_Bone(int boneindex)
 {
 	if (HTree) {
 		HTree->Release_Bone(boneindex);
+		// GeneralsX @bugfix Claude 22/11/2026 See Capture_Bone().
+		Set_Hierarchy_Valid(false);
 	}
 }
 
@@ -762,8 +768,9 @@ void Animatable3DObjClass::Control_Bone(int bindex,const Matrix3D & objtm,bool w
 	}
 #endif
 
-	if (HTree) {
-		HTree->Control_Bone(bindex,objtm,world_space_translation);
+	// GeneralsX @performance Claude 22/11/2026 As in the base game: only a bone that is given another
+	// transform than it has makes the model work its hierarchy out again, see HTreeClass::Control_Bone().
+	if (HTree && HTree->Control_Bone(bindex,objtm,world_space_translation)) {
 		Set_Hierarchy_Valid(false);
 	}
 }

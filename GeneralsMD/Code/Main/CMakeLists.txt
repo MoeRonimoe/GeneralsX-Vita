@@ -65,14 +65,20 @@ target_include_directories(z_generals PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
 )
 
-target_sources(z_generals PRIVATE
-    $<$<BOOL:${WIN32}>:WinMain.cpp>
-    $<$<BOOL:${WIN32}>:WinMain.h>
-    # Linux SDL3 entry point (Phase 1.5 - TheSuperHackers @build 10/02/2026)
-    $<$<NOT:$<BOOL:${WIN32}>>:SDL3Main.cpp>
-    # Linux stubs for P2-P3 platform functions (P2-P3 - TheSuperHackers @build 13/02/2026 BenderAI Session 37)
-    $<$<NOT:$<BOOL:${WIN32}>>:LinuxStubs.cpp>
-)
+if(VITA)
+    # PS Vita entry point and stubs come from the vita_main interface library (Platform/Vita).
+    target_link_libraries(z_generals PRIVATE vita_main)
+    vita_package(z_generals "C&C Generals Zero Hour" GeneralsZH INIZH.big ${CMAKE_SOURCE_DIR}/Platform/Vita/sce_sys/zh)
+else()
+    target_sources(z_generals PRIVATE
+        $<$<BOOL:${WIN32}>:WinMain.cpp>
+        $<$<BOOL:${WIN32}>:WinMain.h>
+        # Linux SDL3 entry point (Phase 1.5 - TheSuperHackers @build 10/02/2026)
+        $<$<NOT:$<BOOL:${WIN32}>>:SDL3Main.cpp>
+        # Linux stubs for P2-P3 platform functions (P2-P3 - TheSuperHackers @build 13/02/2026 BenderAI Session 37)
+        $<$<NOT:$<BOOL:${WIN32}>>:LinuxStubs.cpp>
+    )
+endif()
 
 # RC files optional for MinGW builds
 # Icon: LoadIcon() handles missing resource gracefully (uses default system icon)

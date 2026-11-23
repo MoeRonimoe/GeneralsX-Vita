@@ -44,6 +44,11 @@
 #include "GameNetwork/GameMessageParser.h"
 #include "GameNetwork/GameSpy/PeerDefs.h"
 #include "GameNetwork/networkutil.h"
+
+#if defined(__vita__)
+// How long what was written to a replay may stay in memory, see RecorderClass::updateRecord().
+static const UnsignedInt REPLAY_FLUSH_INTERVAL_MS = 2000;
+#endif
 #include "GameLogic/GameLogic.h"
 #include "Common/RandomValue.h"
 #include "Common/CRCDebug.h"
@@ -496,7 +501,20 @@ void RecorderClass::updateRecord()
 
 	if (needFlush) {
 		DEBUG_ASSERTCRASH(m_file != nullptr, ("RecorderClass::updateRecord() - unexpected call to fflush(m_file)"));
+#if defined(__vita__)
+		// GeneralsX @performance Claude 22/11/2026 As in the base game: the camera of every frame is one of
+		// the messages that count here, so the replay was flushed on every frame, and on the PS Vita a
+		// flush is a write to the memory card that takes 4 ms. The flush is there to leave a replay behind
+		// when the game crashes; one every two seconds does that as well.
+		static UnsignedInt lastFlushTime = 0;
+		const UnsignedInt now = timeGetTime();
+		if (now - lastFlushTime >= REPLAY_FLUSH_INTERVAL_MS) {
+			m_file->flush();
+			lastFlushTime = now;
+		}
+#else
 		m_file->flush();
+#endif
 	}
 }
 

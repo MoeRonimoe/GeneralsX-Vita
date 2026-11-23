@@ -78,7 +78,7 @@ target_include_directories(g_generals PRIVATE
 if(VITA)
     # PS Vita entry point and stubs come from the vita_main interface library (Platform/Vita).
     target_link_libraries(g_generals PRIVATE vita_main)
-    vita_package(g_generals "C&C Generals")
+    vita_package(g_generals "C&C Generals" Generals INI.big ${CMAKE_SOURCE_DIR}/Platform/Vita/sce_sys)
 else()
     target_sources(g_generals PRIVATE
         $<$<BOOL:${WIN32}>:WinMain.cpp>

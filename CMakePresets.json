@@ -226,6 +226,17 @@
             }
         },
         {
+            "name": "vita-zh",
+            "inherits": "vita",
+            "displayName": "PS Vita Zero Hour (VitaSDK, Direct3D 8 on vitaGL)",
+            "description": "Cross build of Zero Hour for PS Vita, in its own build directory with its own title id. Requires the VITASDK environment variable.",
+            "cacheVariables": {
+                "RTS_BUILD_ZEROHOUR": "ON",
+                "RTS_BUILD_GENERALS": "OFF",
+                "VITA_TITLE_ID": "GENZ00001"
+            }
+        },
+        {
             "name": "linux64-deploy",
             "displayName": "Linux 64-bit DXVK/SDL3/MiniAudio Release",
             "inherits": "default-vcpkg",

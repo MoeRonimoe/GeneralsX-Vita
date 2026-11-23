@@ -78,7 +78,7 @@ uint32_t g_sampleTag = 0;
 namespace
 {
 
-const char *const SAMPLE_FILE_PATH = "ux0:data/Generals/UserData/vita_samples.bin";
+const char *const SAMPLE_FILE_NAME = "vita_samples.bin";
 
 enum
 {
@@ -265,7 +265,9 @@ void finishSampling()
 	header[7] = s_unmarked;
 
 	bool written = false;
-	const int file = open(SAMPLE_FILE_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+	char samplePath[256];
+	snprintf(samplePath, sizeof(samplePath), "%s/%s", g_userDataPath, SAMPLE_FILE_NAME);
+	const int file = open(samplePath, O_WRONLY | O_CREAT | O_TRUNC, 0666);
 	if (file >= 0)
 	{
 		written = write(file, header, sizeof(header)) == static_cast<ssize_t>(sizeof(header));
@@ -283,7 +285,7 @@ void finishSampling()
 	}
 
 	fprintf(stderr, "[sample] %u samples %s %s; %u looks found no mark\n", static_cast<unsigned int>(count),
-		written ? "written to" : "COULD NOT BE WRITTEN to", SAMPLE_FILE_PATH, static_cast<unsigned int>(s_unmarked));
+		written ? "written to" : "COULD NOT BE WRITTEN to", samplePath, static_cast<unsigned int>(s_unmarked));
 	fflush(stderr);
 
 	free(s_samples);

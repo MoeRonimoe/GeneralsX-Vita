@@ -133,6 +133,12 @@ public:
 
 	bool								Contains(const Vector3 &point);
 
+	// GeneralsX @performance Claude 22/11/2026 See MeshGeometryClass::compose_deformed_vertex_buffer().
+	void								Compose_Deformed_Vertex_Buffer(
+											VertexFormatXYZNDUV2* verts,
+											const Vector2* uv0,
+											const Vector2* uv1,
+											const unsigned* diffuse);
 	void								Get_Deformed_Vertices(Vector3 *dst_vert, Vector3 *dst_norm);
 	void								Get_Deformed_Vertices(Vector3 *dst_vert);
 

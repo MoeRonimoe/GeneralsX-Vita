@@ -7,7 +7,9 @@
 #                gameenginedevice library so they share its precompiled header
 #   vita_main    entry point; compiled into the game executable
 #
-# vita_package(<target> <title>) turns a game executable into eboot.bin and a .vpk.
+# vita_package(<target> <title> <folder> <check file> <sce_sys>) turns a game executable into
+# eboot.bin and a .vpk: the game's data is expected in ux0:data/<folder>, which has to have
+# <check file> in it, and the LiveArea images come from <sce_sys>.
 
 add_library(vita_compat STATIC
     compat/VitaDiagnostics.cpp
@@ -190,11 +192,17 @@ target_link_libraries(vita_main INTERFACE
     pthread
 )
 
-function(vita_package target title)
+function(vita_package target title folder check_file sce_sys)
     # vita_create_self() looks for the ELF under the target's name in the current binary directory.
     set_target_properties(${target} PROPERTIES
         OUTPUT_NAME ${target}
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+
+    # Where the entry point (Main/VitaMain.cpp) looks for the game's data.
+    target_compile_definitions(${target} PRIVATE
+        VITA_GAME_FOLDER="${folder}"
+        VITA_GAME_CHECK_FILE="${check_file}"
     )
 
     vita_create_self(${target}.self ${target} UNSAFE)
@@ -203,9 +211,9 @@ function(vita_package target title)
     vita_create_vpk(${target}.vpk ${VITA_TITLE_ID} ${target}.self
         VERSION ${VITA_APP_VERSION}
         NAME "${title}"
-        FILE ${CMAKE_SOURCE_DIR}/Platform/Vita/sce_sys/icon0.png sce_sys/icon0.png
-        FILE ${CMAKE_SOURCE_DIR}/Platform/Vita/sce_sys/livearea/contents/bg.png sce_sys/livearea/contents/bg.png
-        FILE ${CMAKE_SOURCE_DIR}/Platform/Vita/sce_sys/livearea/contents/startup.png sce_sys/livearea/contents/startup.png
+        FILE ${sce_sys}/icon0.png sce_sys/icon0.png
+        FILE ${sce_sys}/livearea/contents/bg.png sce_sys/livearea/contents/bg.png
+        FILE ${sce_sys}/livearea/contents/startup.png sce_sys/livearea/contents/startup.png
         FILE ${CMAKE_SOURCE_DIR}/Platform/Vita/sce_sys/livearea/contents/template.xml sce_sys/livearea/contents/template.xml
         # Fonts for the FreeType text renderer (Liberation, metric compatible with the fonts
         # the game asks for). The entry point points the engine at app0:fonts.

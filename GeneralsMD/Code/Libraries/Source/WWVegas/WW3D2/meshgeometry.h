@@ -58,6 +58,7 @@ class SphereClass;
 class ChunkLoadClass;
 class AABTreeClass;
 class HTreeClass;
+struct VertexFormatXYZNDUV2;
 class RenderInfoClass;
 
 // Define which kind of index vector to use (16- or 32 bit)
@@ -221,6 +222,10 @@ protected:
 	// Destination pointers MUST point to arrays large enough to hold all vertices
 	void get_deformed_vertices(Vector3 *dst_vert, Vector3 *dst_norm, const HTreeClass * htree);
 	void get_deformed_vertices(Vector3 *dst_vert, const HTreeClass * htree);
+	// GeneralsX @performance Claude 22/11/2026 The deformed vertices with their normals, colors and texture
+	// coordinates, written straight into a vertex buffer (see MeshClass::Compose_Deformed_Vertex_Buffer()).
+	void compose_deformed_vertex_buffer(VertexFormatXYZNDUV2* verts, const Vector2* uv0, const Vector2* uv1,
+		const unsigned* diffuse, const HTreeClass * htree);
 	void get_deformed_screenspace_vertices(Vector4 *dst_vert,const RenderInfoClass & rinfo,const Matrix3D & mesh_tm,const HTreeClass * htree);
 
 	// General info

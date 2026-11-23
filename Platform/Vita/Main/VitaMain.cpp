@@ -20,10 +20,12 @@
 // Entry point for the PS Vita. Replaces WinMain(): prepares the console
 // (memory, clocks, network, working directory) and runs GameMain().
 //
-// The retail game data is expected in ux0:data/Generals/ (the contents of the
-// installed game directory). Everything the game writes goes to
-// ux0:data/Generals/UserData/. Extra command line arguments can be put into
-// ux0:data/Generals/vita_args.txt, separated by whitespace.
+// The retail game data is expected in ux0:data/<game>/ (the contents of the
+// installed game directory), where <game> is VITA_GAME_FOLDER: Generals for the
+// base game, GeneralsZH for Zero Hour (vita_package() in Platform/Vita/CMakeLists.txt).
+// Everything the game writes goes to ux0:data/<game>/UserData/. Extra command
+// line arguments can be put into ux0:data/<game>/vita_args.txt, separated by
+// whitespace.
 ///////////////////////////////////////////////////////////////////////////////
 
 #include "Lib/BaseType.h"
@@ -96,18 +98,25 @@ extern "C"
 namespace
 {
 
-const char *const GAME_DATA_PATH = "ux0:data/Generals";
-const char *const USER_DATA_PATH = "ux0:data/Generals/UserData";
+#if !defined(VITA_GAME_FOLDER) || !defined(VITA_GAME_CHECK_FILE)
+#error "VITA_GAME_FOLDER and VITA_GAME_CHECK_FILE come from vita_package() (Platform/Vita/CMakeLists.txt)"
+#endif
+#define VITA_DATA_DIRECTORY "ux0:data/" VITA_GAME_FOLDER
+
+const char *const GAME_DATA_PATH = VITA_DATA_DIRECTORY;
+const char *const USER_DATA_PATH = VITA_DATA_DIRECTORY "/UserData";
 #ifdef VITA_PGO_GENERATE
 // The run that collects the profile keeps the log of the last ordinary run intact.
-const char *const LOG_FILE_PATH = "ux0:data/Generals/UserData/vita_log_pgo.txt";
-const char *const PREVIOUS_LOG_FILE_PATH = "ux0:data/Generals/UserData/vita_log_pgo_previous.txt";
-const char *const PROFILE_DATA_PATH = "ux0:data/Generals/UserData/pgo_profile.gcfn";
+const char *const LOG_FILE_PATH = VITA_DATA_DIRECTORY "/UserData/vita_log_pgo.txt";
+const char *const PREVIOUS_LOG_FILE_PATH = VITA_DATA_DIRECTORY "/UserData/vita_log_pgo_previous.txt";
+const char *const PROFILE_DATA_PATH = VITA_DATA_DIRECTORY "/UserData/pgo_profile.gcfn";
 #else
-const char *const LOG_FILE_PATH = "ux0:data/Generals/UserData/vita_log.txt";
-const char *const PREVIOUS_LOG_FILE_PATH = "ux0:data/Generals/UserData/vita_log_previous.txt";
+const char *const LOG_FILE_PATH = VITA_DATA_DIRECTORY "/UserData/vita_log.txt";
+const char *const PREVIOUS_LOG_FILE_PATH = VITA_DATA_DIRECTORY "/UserData/vita_log_previous.txt";
 #endif
-const char *const EXTRA_ARGS_PATH = "ux0:data/Generals/vita_args.txt";
+const char *const EXTRA_ARGS_PATH = VITA_DATA_DIRECTORY "/vita_args.txt";
+// A file the game's data has, to tell that it was copied to GAME_DATA_PATH.
+const char *const GAME_CHECK_FILE = VITA_GAME_CHECK_FILE;
 const char *const BUNDLED_FONTS_PATH = "app0:fonts";
 
 // The network stack needs its own memory before the first socket is opened.
@@ -209,6 +218,7 @@ void openLog()
 	// Created even when the game data is missing, so that the log can say so.
 	mkdir(GAME_DATA_PATH, 0777);
 	mkdir(USER_DATA_PATH, 0777);
+	VitaDiagnostics::g_userDataPath = USER_DATA_PATH;
 
 	// The log of the run before stays, under another name. Whoever starts the game again
 	// after it ended on its own would otherwise have nothing left to tell why it did.
@@ -302,7 +312,7 @@ int main(int argc, char *argv[])
 	VitaDiagnostics::install();
 	VitaDiagnostics::logMemory("at start");
 
-	if (chdir(GAME_DATA_PATH) != 0 || access("INI.big", F_OK) != 0)
+	if (chdir(GAME_DATA_PATH) != 0 || access(GAME_CHECK_FILE, F_OK) != 0)
 	{
 		fprintf(stderr, "FATAL: no game data in %s. Copy the contents of the installed game directory there.\n", GAME_DATA_PATH);
 		fflush(stderr);

@@ -193,6 +193,14 @@ void logThrow(const void *thrown, const std::type_info *type, const void *return
 }
 
 //-----------------------------------------------------------------------------
+/// Bytes that can still be had in one piece at the top of the heap: the free chunk at its
+/// end and the part of the reservation it has not claimed yet.
+size_t largestBlockAtTop(const struct mallinfo &heap)
+{
+	return static_cast<size_t>(heap.keepcost) + (_newlib_heap_size_user - static_cast<size_t>(heap.arena));
+}
+
+//-----------------------------------------------------------------------------
 void onTerminate()
 {
 	fprintf(stderr, "FATAL: std::terminate() called\n");
@@ -212,6 +220,31 @@ void __wrap___cxa_throw(void *thrown, std::type_info *type, void (*destructor)(v
 
 namespace VitaDiagnostics
 {
+
+const char *g_userDataPath = "ux0:data/Generals/UserData";
+size_t g_soundEffectBytes = 0;
+
+//-----------------------------------------------------------------------------
+size_t getHeapRoom()
+{
+	// How old the measurement may be. One takes a millisecond or more when the heap is
+	// broken up into many free pieces.
+	const uint64_t HEAP_ROOM_INTERVAL_US = 1000 * 1000;
+
+	static uint64_t measuredAt = 0;
+	static size_t room = 0;
+
+	const uint64_t time = now();
+	if (measuredAt == 0 || time - measuredAt >= HEAP_ROOM_INTERVAL_US)
+	{
+		const struct mallinfo heap = mallinfo();
+		const size_t used = static_cast<size_t>(heap.uordblks);
+		room = _newlib_heap_size_user > used ? _newlib_heap_size_user - used : 0;
+		measuredAt = time;
+	}
+
+	return room;
+}
 
 //-----------------------------------------------------------------------------
 MemoryState getMemoryState()
@@ -234,6 +267,39 @@ MemoryState getMemoryState()
 	state.freePhycont = unclaimed.size_phycont;
 
 	return state;
+}
+
+//-----------------------------------------------------------------------------
+void logFailedAllocation(size_t bytes)
+{
+	const struct mallinfo heap = mallinfo();
+	fprintf(stderr, "[alloc] %.2f MB could not be allocated: heap %.1f MB in use and %.1f MB free in %.1f MB claimed of %.1f MB, %.1f MB in one piece at its top\n",
+		bytes / MEGABYTE, heap.uordblks / MEGABYTE, heap.fordblks / MEGABYTE, heap.arena / MEGABYTE,
+		_newlib_heap_size_user / MEGABYTE, largestBlockAtTop(heap) / MEGABYTE);
+	fflush(stderr);
+}
+
+//-----------------------------------------------------------------------------
+void logLargeAllocation(size_t bytes)
+{
+	static int count = 0;
+	const int MAX_LOGGED_LARGE_ALLOCATIONS = 300;
+	if (count >= MAX_LOGGED_LARGE_ALLOCATIONS)
+		return;
+	++count;
+
+	const struct mallinfo heap = mallinfo();
+	fprintf(stderr, "[alloc] %.2f MB allocated; heap %.1f MB in use, %.1f MB in one piece at its top\n",
+		bytes / MEGABYTE, heap.uordblks / MEGABYTE, largestBlockAtTop(heap) / MEGABYTE);
+
+	Trace trace;
+	trace.count = 0;
+	_Unwind_Backtrace(collectFrame, &trace);
+	fprintf(stderr, "[alloc]   call chain:");
+	for (int i = 0; i < trace.count; ++i)
+		fprintf(stderr, " +0x%x", codeOffset(trace.frames[i]));
+	fprintf(stderr, "\n");
+	fflush(stderr);
 }
 
 //-----------------------------------------------------------------------------

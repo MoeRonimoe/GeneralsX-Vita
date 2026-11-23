@@ -201,6 +201,8 @@ if(WIN32)
 #        Source/Win32Device/GameClient/Win32DIMouse.cpp
         ${CMAKE_SOURCE_DIR}/Core/GameEngineDevice/Source/Win32Device/GameClient/Win32Mouse.cpp
     )
+elseif(VITA)
+    # PS Vita: the device sources come from the vita_device interface library (Platform/Vita).
 else()
     # Linux-specific files (SDL3, OpenAL+FFmpeg audio, DXVK)
     list(APPEND GAMEENGINEDEVICE_SRC
@@ -254,6 +256,10 @@ target_link_libraries(z_gameenginedevice PUBLIC
 # GeneralsX @build BenderAI 11/02/2026
 if(SAGE_USE_SDL3)
     target_link_libraries(z_gameenginedevice PUBLIC sdl3lib)
+endif()
+
+if(VITA)
+    target_link_libraries(z_gameenginedevice PUBLIC vita_device)
 endif()
 # Phase 3: Video playback (FFmpeg) + Phase 2: Audio decoding (FFmpeg)
 # GeneralsX @feature BenderAI 21/02/2026 OpenAL audio backend (Audio + Video via FFmpeg)

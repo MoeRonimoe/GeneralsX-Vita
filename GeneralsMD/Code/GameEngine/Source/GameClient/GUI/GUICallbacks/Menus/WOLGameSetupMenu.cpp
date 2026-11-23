@@ -65,9 +65,23 @@
 #include "GameNetwork/NAT.h"
 #include "GameNetwork/GUIUtil.h"
 #include "GameNetwork/GameSpy/GSConfig.h"
+// GeneralsX @build Claude 22/11/2026 Only with NGMP: its headers need curl, which the PS Vita build has not.
+#if defined(SAGE_USE_NGMP)
 #include "GameNetwork/GeneralsOnline/NGMP_interfaces.h"
+#endif
 
 void WOLDisplaySlotList();
+
+// GeneralsX @build Claude 22/11/2026 Whether the game being set up allows observers: NGMP's game says so
+// with NGMP; without it (VC6, PS Vita) the GameSpy staging room does, as upstream.
+static Bool stagingRoomAllowsObservers()
+{
+#if defined(SAGE_USE_NGMP)
+	if (TheNGMPGame)
+		return TheNGMPGame->getAllowObservers();
+#endif
+	return TheGameSpyInfo && TheGameSpyInfo->getCurrentStagingRoom() ? TheGameSpyInfo->getCurrentStagingRoom()->getAllowObservers() : TRUE;
+}
 
 
 extern std::list<PeerResponse> TheLobbyQueuedUTMs;
@@ -1564,7 +1578,7 @@ void InitWOLGameGadgets()
 		comboBoxPlayerTemplateID[i] = TheNameKeyGenerator->nameToKey( tmpString );
 		comboBoxPlayerTemplate[i] = TheWindowManager->winGetWindowFromId( parentWOLGameSetup, comboBoxPlayerTemplateID[i] );
 		DEBUG_ASSERTCRASH(comboBoxPlayerTemplate[i], ("Could not find the comboBoxPlayerTemplate[%d]",i ));
-		Bool allowObs = TheNGMPGame ? TheNGMPGame->getAllowObservers() : (TheGameSpyInfo && TheGameSpyInfo->getCurrentStagingRoom() ? TheGameSpyInfo->getCurrentStagingRoom()->getAllowObservers() : TRUE);
+		Bool allowObs = stagingRoomAllowsObservers();
 		PopulatePlayerTemplateComboBox(i, comboBoxPlayerTemplate, theGameInfo, allowObs );
 
 		// add tooltips to the player template combobox and listbox
@@ -3282,7 +3296,7 @@ WindowMsgHandledType WOLGameSetupMenuSystem( GameWindow *window, UnsignedInt msg
 								  myGame->resetAccepted();
 								  if (wasAI ^ isAI)
 								  {
-									  Bool allowObs = TheNGMPGame ? TheNGMPGame->getAllowObservers() : (TheGameSpyInfo && TheGameSpyInfo->getCurrentStagingRoom() ? TheGameSpyInfo->getCurrentStagingRoom()->getAllowObservers() : TRUE);
+									  Bool allowObs = stagingRoomAllowsObservers();
 									  PopulatePlayerTemplateComboBox(i, comboBoxPlayerTemplate, myGame, wasAI && allowObs);
 								  }
 								  if (TheGameSpyInfo) TheGameSpyInfo->setGameOptions();

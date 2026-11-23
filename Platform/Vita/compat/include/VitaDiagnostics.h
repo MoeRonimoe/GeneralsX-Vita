@@ -45,6 +45,29 @@ MemoryState getMemoryState();
 /// Write the state of the C heap and of the application's memory budget to the log.
 void logMemory(const char *label);
 
+/// An allocation of this many bytes failed: the log says so, with how much of the heap was in
+/// use and free and the largest block still to be had at its top, which tells a full heap from
+/// one that is broken up.
+void logFailedAllocation(size_t bytes);
+
+/// An allocation of a size worth knowing about (several megabytes), with the calls that led to
+/// it; for the engine's large allocations in a measuring build. Logs the first few hundred.
+void logLargeAllocation(size_t bytes);
+
+/// Bytes of the C heap still to be had: its reservation less what is in use, as measured at
+/// most a second ago, since measuring walks the allocator's free lists. For the game's thread.
+/// What the port keeps in memory although it could do without (the decoded sound effects)
+/// gives way when this gets low.
+size_t getHeapRoom();
+
+/// Bytes of decoded sound effects the audio keeps in memory, for the memory lines of the
+/// log. Set and read by the game's thread.
+extern size_t g_soundEffectBytes;
+
+/// The folder the game writes to (ux0:data/<game>/UserData), set by the entry point before
+/// anything is written; for what the libraries of the platform layer write there.
+extern const char *g_userDataPath;
+
 /// Report std::terminate() in the log. Throws are reported without any setup.
 void install();
 

@@ -46,7 +46,8 @@
 #include "W3DDevice/GameClient/W3DGameFont.h"
 #include "W3DDevice/GameClient/W3DDisplayStringManager.h"
 #include "VideoDevice/Bink/BinkVideoPlayer.h"
-#ifdef RTS_HAS_FFMPEG
+// GeneralsX @feature Claude 22/11/2026 The PS Vita plays movies with FFmpeg when its build has one (VITA_MOVIES).
+#if defined(RTS_HAS_FFMPEG) || defined(VITA_MOVIES)
 #include "VideoDevice/FFmpeg/FFmpegVideoPlayer.h"
 #endif
 #include "Win32Device/GameClient/Win32DIKeyboard.h"
@@ -55,7 +56,12 @@
 #include "W3DDevice/GameClient/W3DMouse.h"
 
 // TheSuperHackers @build 10/02/2026 BenderAI - Phase 1.5 SDL3 input devices
-#ifndef _WIN32
+#if defined(__vita__)
+// PS Vita: touch, sticks and buttons (Platform/Vita/Device)
+#include "VitaKeyboard.h"
+#include "VitaMouse.h"
+#include "VitaNoVideoPlayer.h"
+#elif !defined(_WIN32)
 #include <cstdlib>
 #include "SDL3Device/GameClient/SDL3Mouse.h"
 #include "SDL3Device/GameClient/SDL3Keyboard.h"
@@ -119,8 +125,11 @@ protected:
 
   /// Manager for display strings
 	virtual DisplayStringManager *createDisplayStringManager() override { return NEW W3DDisplayStringManager; }
-#ifdef RTS_HAS_FFMPEG
-	virtual VideoPlayerInterface *createVideoPlayer() { return NEW FFmpegVideoPlayer; }
+#if defined(RTS_HAS_FFMPEG) || defined(VITA_MOVIES)
+	virtual VideoPlayerInterface *createVideoPlayer() override { return NEW FFmpegVideoPlayer; }
+#elif defined(__vita__)
+	// A Vita build without FFmpeg (Platform/Vita/tools/build-ffmpeg.sh) skips the movies.
+	virtual VideoPlayerInterface *createVideoPlayer() override { return NEW VitaNoVideoPlayer; }
 #else
 	virtual VideoPlayerInterface *createVideoPlayer() override { return NEW BinkVideoPlayer; }
 #endif
@@ -136,7 +145,9 @@ protected:
 
 // TheSuperHackers @build 10/02/2026 BenderAI - Phase 1.5 SDL3 input factory wiring
 inline Keyboard *W3DGameClient::createKeyboard() {
-#ifndef _WIN32
+#if defined(__vita__)
+	return NEW VitaKeyboard;
+#elif !defined(_WIN32)
 	return NEW SDL3Keyboard();  // Linux: SDL3 keyboard
 #else
 	return NEW DirectInputKeyboard;  // Windows: DirectInput keyboard
@@ -146,7 +157,9 @@ inline Keyboard *W3DGameClient::createKeyboard() {
 inline Mouse *W3DGameClient::createMouse()
 {
 // GeneralsX @bugfix BenderAI 14/03/2026 SDL3 mouse creation must fail fast instead of returning nullptr.
-#ifndef _WIN32
+#if defined(__vita__)
+	return NEW VitaMouse;
+#elif !defined(_WIN32)
 	// Linux: SDL3 mouse requires the pre-initialized SDL3GameEngine window.
 	SDL3GameEngine* sdlEngine = dynamic_cast<SDL3GameEngine*>(TheGameEngine);
 	if (sdlEngine && sdlEngine->getSDLWindow()) {

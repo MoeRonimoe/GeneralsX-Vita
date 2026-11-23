@@ -69,7 +69,10 @@
 #include "GameNetwork/GameSpy/PersistentStorageThread.h"
 #include "GameNetwork/GameSpy/LobbyUtils.h"
 #include "GameNetwork/RankPointValue.h"
+// GeneralsX @build Claude 22/11/2026 Only with NGMP: its headers need curl, which the PS Vita build has not.
+#if defined(SAGE_USE_NGMP)
 #include "GameNetwork/GeneralsOnline/NGMP_interfaces.h"
+#endif
 
 void refreshGameList( Bool forceRefresh = FALSE );
 void refreshPlayerList( Bool forceRefresh = FALSE );
@@ -209,12 +212,14 @@ Bool handleLobbySlashCommands(UnicodeString uText)
 	else if (token == "me" && uText.getLength()>4)
 	{
 		UnicodeString msg = UnicodeString(uText.str() + 4); // skip the /me
+#if defined(SAGE_USE_NGMP)
 		NGMP_OnlineServices_RoomsInterface* pRoomsInterface = NGMP_OnlineServicesManager::GetInterface<NGMP_OnlineServices_RoomsInterface>();
 		if (pRoomsInterface != nullptr)
 		{
 			pRoomsInterface->SendChatMessageToCurrentRoom(msg, true);
 		}
 		else
+#endif
 		{
 			TheGameSpyInfo->sendChat(UnicodeString(uText.str()+4), TRUE, listboxLobbyPlayers);
 		}
@@ -236,6 +241,7 @@ Bool handleLobbySlashCommands(UnicodeString uText)
 		{
 			GadgetListBoxAddEntryText(listboxLobbyChat, UnicodeString(L"Your new name must be between 3 and 16 characters."), GameMakeColor(255, 0, 0, 255), -1, -1);
 		}
+#if defined(SAGE_USE_NGMP)
 		else
 		{
 			std::shared_ptr<WebSocket> pWS = NGMP_OnlineServicesManager::GetWebSocket();
@@ -244,6 +250,7 @@ Bool handleLobbySlashCommands(UnicodeString uText)
 				pWS->SendData_ChangeName(newName);
 			}
 		}
+#endif
 		
 		return TRUE; // was a slash command
 	}
@@ -1027,6 +1034,7 @@ void PopulateLobbyPlayerListbox()
 #endif
 }
 
+#if defined(SAGE_USE_NGMP)
 void NGMP_WOLLobbyMenu_CreateLobbyCallback(bool bSuccess)
 {
 	buttonPushed = true;
@@ -1067,17 +1075,20 @@ void NGMP_WOLLobbyMenu_JoinLobbyCallback(EJoinLobbyResult result)
 		GSMessageBoxOk(TheGameText->fetch("GUI:JoinFailedDefault"), s);
 	}
 }
+#endif
 
 //-------------------------------------------------------------------------------------------------
 /** Initialize the WOL Lobby Menu */
 //-------------------------------------------------------------------------------------------------
 void WOLLobbyMenuInit( WindowLayout *layout, void *userData )
 {
+#if defined(SAGE_USE_NGMP)
 	NGMP_OnlineServices_LobbyInterface* pLobbyInterface = NGMP_OnlineServicesManager::GetInterface<NGMP_OnlineServices_LobbyInterface>();
 	if (pLobbyInterface != nullptr)
 	{
 		pLobbyInterface->LeaveCurrentLobby();
 	}
+#endif
 
 	nextScreen = nullptr;
 	buttonPushed = false;
@@ -1131,6 +1142,7 @@ void WOLLobbyMenuInit( WindowLayout *layout, void *userData )
 	// Show Menu
 	layout->hide( FALSE );
 
+#if defined(SAGE_USE_NGMP)
 	NGMP_OnlineServices_RoomsInterface* pRoomsInterface = NGMP_OnlineServicesManager::GetInterface<NGMP_OnlineServices_RoomsInterface>();
 	if (pLobbyInterface != nullptr && pRoomsInterface != nullptr)
 	{
@@ -1146,17 +1158,20 @@ void WOLLobbyMenuInit( WindowLayout *layout, void *userData )
 				refreshPlayerList(false);
 			});
 	}
+#endif
 
 	GrabWindowInfo();
 
 	// animate controls
 //	TheShell->registerWithAnimateManager(parent, WIN_ANIMATION_SLIDE_TOP, TRUE);
 	TheShell->showShellMap(TRUE);
+#if defined(SAGE_USE_NGMP)
 	if (TheNGMPGame != nullptr)
 	{
 		TheNGMPGame->reset();
 	}
 	else
+#endif
 	{
 		TheGameSpyGame->reset();
 	}
@@ -1223,6 +1238,7 @@ static void shutdownComplete( WindowLayout *layout )
 //-------------------------------------------------------------------------------------------------
 void WOLLobbyMenuShutdown( WindowLayout *layout, void *userData )
 {
+#if defined(SAGE_USE_NGMP)
 	NGMP_OnlineServices_LobbyInterface* pLobbyInterface = NGMP_OnlineServicesManager::GetInterface<NGMP_OnlineServices_LobbyInterface>();
 	if (pLobbyInterface != nullptr)
 	{
@@ -1239,6 +1255,7 @@ void WOLLobbyMenuShutdown( WindowLayout *layout, void *userData )
 		pRoomsInterface->DeregisterForChatCallback();
 		pRoomsInterface->DeregisterForRosterNeedsRefreshCallback();
 	}
+#endif
 
 	CustomMatchPreferences pref;
 //	GameWindow *slider = TheWindowManager->winGetWindowFromId(parent, sliderChatAdjustID);

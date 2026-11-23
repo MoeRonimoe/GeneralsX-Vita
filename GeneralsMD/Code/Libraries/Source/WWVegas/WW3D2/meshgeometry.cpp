@@ -100,6 +100,11 @@
 #include "WWMath/matrix4.h"
 #include "rinfo.h"
 #include "camera.h"
+#include "dx8fvf.h"
+
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 
 
 #if (OPTIMIZE_PLANEEQ_RAM)
@@ -2089,6 +2094,106 @@ void MeshGeometryClass::get_deformed_vertices(Vector3 *dst_vert, Vector3 *dst_no
 		VectorProcessorClass::Transform(dst_vert+vi,src_vert+vi,mytm,cnt-vi);
 		mytm.Set_Translation(Vector3(0.0f,0.0f,0.0f));
 		VectorProcessorClass::Transform(dst_norm+vi,src_norm+vi,mytm,cnt-vi);
+		vi=cnt;
+	}
+}
+
+// GeneralsX @performance Claude 22/11/2026 Taken over from the base game's MeshModelClass (Generals' WW3D2):
+// the skin transformed straight into the vertex buffer, with NEON on the PS Vita, instead of into two
+// arrays that the renderer then copies into it.
+// Destination pointer MUST point to arrays large enough to hold all vertices
+void MeshGeometryClass::compose_deformed_vertex_buffer(
+	VertexFormatXYZNDUV2* verts,
+	const Vector2* uv0,
+	const Vector2* uv1,
+	const unsigned* diffuse,
+	const HTreeClass * htree)
+{
+	int vi;
+	int vertex_count=Get_Vertex_Count();
+	Vector3 * src_vert = Vertex->Get_Array();
+#if (OPTIMIZE_VNORMS)
+	Vector3 * src_norm = (Vector3 *)Get_Vertex_Normal_Array();
+#else
+	Vector3 * src_norm = VertexNorm->Get_Array();
+#endif
+	uint16 * bonelink = VertexBoneLink->Get_Array();
+
+	for (vi = 0; vi < vertex_count;) {
+		const Matrix3D & tm = htree->Get_Transform(bonelink[vi]);
+
+		int idx=bonelink[vi];
+		int cnt;
+		for (cnt = vi; cnt < vertex_count; cnt++) {
+			if (idx!=bonelink[cnt]) {
+				break;
+			}
+		}
+
+#if defined(__ARM_NEON)
+		// The vertices of a bone are transformed three coordinates at a time: x * c0 + y * c1 + z * c2 + c3,
+		// with the columns of the bone's matrix.
+		const float columns[4][4] = {
+			{ tm[0][0], tm[1][0], tm[2][0], 0.0f },
+			{ tm[0][1], tm[1][1], tm[2][1], 0.0f },
+			{ tm[0][2], tm[1][2], tm[2][2], 0.0f },
+			{ tm[0][3], tm[1][3], tm[2][3], 0.0f }
+		};
+		const float32x4_t c0 = vld1q_f32(columns[0]);
+		const float32x4_t c1 = vld1q_f32(columns[1]);
+		const float32x4_t c2 = vld1q_f32(columns[2]);
+		const float32x4_t c3 = vld1q_f32(columns[3]);
+#endif
+
+		for (int index=vi;index<cnt;++index) {
+			VertexFormatXYZNDUV2* out=verts+index;
+			const Vector3& v=src_vert[index];
+			const Vector3& n=src_norm[index];
+
+#if defined(__ARM_NEON)
+			float32x4_t position = vmlaq_f32(c3, c0, vld1q_dup_f32(&v.X));
+			position = vmlaq_f32(position, c1, vld1q_dup_f32(&v.Y));
+			position = vmlaq_f32(position, c2, vld1q_dup_f32(&v.Z));
+
+			float32x4_t normal = vmulq_f32(c0, vld1q_dup_f32(&n.X));
+			normal = vmlaq_f32(normal, c1, vld1q_dup_f32(&n.Y));
+			normal = vmlaq_f32(normal, c2, vld1q_dup_f32(&n.Z));
+
+			// The fourth number of the position lands on nx, which is written next.
+			vst1q_f32(&out->x, position);
+			vst1_f32(&out->nx, vget_low_f32(normal));
+			vst1q_lane_f32(&out->nz, normal, 2);
+#else
+			const Matrix3D& A=tm;
+			out->x = (A[0][0] * v.X + A[0][1] * v.Y + A[0][2] * v.Z + A[0][3]);
+			out->y = (A[1][0] * v.X + A[1][1] * v.Y + A[1][2] * v.Z + A[1][3]);
+			out->z = (A[2][0] * v.X + A[2][1] * v.Y + A[2][2] * v.Z + A[2][3]);
+
+			out->nx = (A[0][0] * n.X + A[0][1] * n.Y + A[0][2] * n.Z);
+			out->ny = (A[1][0] * n.X + A[1][1] * n.Y + A[1][2] * n.Z);
+			out->nz = (A[2][0] * n.X + A[2][1] * n.Y + A[2][2] * n.Z);
+#endif
+
+			// Both sets of texture coordinates are written, and zeros where the mesh has none.
+			out->diffuse=diffuse ? diffuse[index] : 0xFFFFFFFF;
+			if (uv0) {
+				out->u1=uv0[index][0];
+				out->v1=uv0[index][1];
+			}
+			else {
+				out->u1=0.0f;
+				out->v1=0.0f;
+			}
+			if (uv1) {
+				out->u2=uv1[index][0];
+				out->v2=uv1[index][1];
+			}
+			else {
+				out->u2=0.0f;
+				out->v2=0.0f;
+			}
+		}
+
 		vi=cnt;
 	}
 }

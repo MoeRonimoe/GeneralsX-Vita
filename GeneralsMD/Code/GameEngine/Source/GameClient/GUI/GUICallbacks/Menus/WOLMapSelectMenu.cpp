@@ -67,7 +67,24 @@ static NameKeyType buttonMapStartPositionID[MAX_SLOTS] = { NAMEKEY_INVALID,NAMEK
 
 static GameWindow *winMapWindow = nullptr;
 
+// GeneralsX @build Claude 22/11/2026 The map of the game being set up: NGMP's game has it with NGMP; without
+// it (VC6, PS Vita) the GameSpy staging room does, as upstream.
+static AsciiString chosenGameMap(const AsciiString &fallback)
+{
+#if defined(SAGE_USE_NGMP)
+	if (TheNGMPGame)
+		return TheNGMPGame->getMap();
+#else
+	if (TheGameSpyInfo && TheGameSpyInfo->getCurrentStagingRoom())
+		return TheGameSpyInfo->getCurrentStagingRoom()->getMap();
+#endif
+	return fallback;
+}
+
+// GeneralsX @build Claude 22/11/2026 Only with NGMP: its headers need curl, which the PS Vita build has not.
+#if defined(SAGE_USE_NGMP)
 #include "GameNetwork/GeneralsOnline/NGMP_interfaces.h"
+#endif
 
 static void NullifyControls(void)
 {
@@ -138,14 +155,19 @@ void WOLMapSelectMenuInit( WindowLayout *layout, void *userData )
 	winMapPreviewID = TheNameKeyGenerator->nameToKey( "WOLMapSelectMenu.wnd:WinMapPreview" );
 	winMapPreview = TheWindowManager->winGetWindowFromId(parent, winMapPreviewID);
 
-	const MapMetaData *mmd = TheMapCache ? TheMapCache->findMap(TheNGMPGame ? TheNGMPGame->getMap() : AsciiString::TheEmptyString) : nullptr;
+	const MapMetaData *mmd = TheMapCache ? TheMapCache->findMap(chosenGameMap(AsciiString::TheEmptyString)) : nullptr;
 	if (mmd)
 	{
 		usesSystemMapDir = mmd->m_isOfficial;
 	}
 
 #if !defined(GENERALS_ONLINE_ALLOW_ALL_SETTINGS_FOR_STATS_MATCHES)
+#if defined(SAGE_USE_NGMP)
 	bool bUseStats = TheNGMPGame ? TheNGMPGame->getUseStats() : false;
+#else
+	// GeneralsX @build Claude 22/11/2026 Without NGMP the GameSpy staging room says so, as upstream.
+	bool bUseStats = TheGameSpyInfo && TheGameSpyInfo->getCurrentStagingRoom() && TheGameSpyInfo->getCurrentStagingRoom()->getUseStats();
+#endif
 	//if stats are enabled, only official maps can be used
 	if(bUseStats)
 		usesSystemMapDir = true;
@@ -200,7 +222,7 @@ void WOLMapSelectMenuInit( WindowLayout *layout, void *userData )
 				GadgetListBoxSetListLength(mapList, TheMapCache->size());
 			}
 		}
-		populateMapListbox( mapList, usesSystemMapDir, TRUE, TheNGMPGame ? TheNGMPGame->getMap() : getDefaultMap(TRUE) );
+		populateMapListbox( mapList, usesSystemMapDir, TRUE, chosenGameMap(getDefaultMap(TRUE)) );
 	}
 
 }
@@ -420,7 +442,7 @@ WindowMsgHandledType WOLMapSelectMenuSystem( GameWindow *window, UnsignedInt msg
 						GadgetListBoxSetListLength(mapList, TheMapCache->size());
 					}
 				}
-				populateMapListbox( mapList, TRUE, TRUE, TheNGMPGame ? TheNGMPGame->getMap() : getDefaultMap(TRUE) );
+				populateMapListbox( mapList, TRUE, TRUE, chosenGameMap(getDefaultMap(TRUE)) );
 				CustomMatchPreferences pref;
 				pref.setUsesSystemMapDir(TRUE);
 				pref.write();
@@ -435,7 +457,7 @@ WindowMsgHandledType WOLMapSelectMenuSystem( GameWindow *window, UnsignedInt msg
 						GadgetListBoxSetListLength(mapList, TheMapCache->size());
 					}
 				}
-				populateMapListbox( mapList, FALSE, TRUE, TheNGMPGame ? TheNGMPGame->getMap() : getDefaultMap(TRUE) );
+				populateMapListbox( mapList, FALSE, TRUE, chosenGameMap(getDefaultMap(TRUE)) );
 				CustomMatchPreferences pref;
 				pref.setUsesSystemMapDir(FALSE);
 				pref.write();
@@ -468,10 +490,12 @@ WindowMsgHandledType WOLMapSelectMenuSystem( GameWindow *window, UnsignedInt msg
 					AsciiString strMapName;
 					bool bOfficialMap = false;
 
+#if defined(SAGE_USE_NGMP)
 					if (TheNGMPGame)
 					{
 						TheNGMPGame->setMap(asciiMap);
 					}
+#endif
 					if (TheGameSpyInfo && TheGameSpyInfo->getCurrentStagingRoom())
 					{
 						TheGameSpyInfo->getCurrentStagingRoom()->setMap(asciiMap);
@@ -480,12 +504,14 @@ WindowMsgHandledType WOLMapSelectMenuSystem( GameWindow *window, UnsignedInt msg
 					std::map<AsciiString, MapMetaData>::iterator it = TheMapCache ? TheMapCache->find(asciiMap) : std::map<AsciiString, MapMetaData>::iterator();
 					if (TheMapCache && it != TheMapCache->end())
 					{
+#if defined(SAGE_USE_NGMP)
 						if (TheNGMPGame)
 						{
 							TheNGMPGame->getGameSpySlot(0)->setMapAvailability(TRUE);
 							TheNGMPGame->setMapCRC( it->second.m_CRC );
 							TheNGMPGame->setMapSize( it->second.m_filesize );
 						}
+#endif
 						if (TheGameSpyInfo && TheGameSpyInfo->getCurrentStagingRoom())
 						{
 							TheGameSpyInfo->getCurrentStagingRoom()->getGameSpySlot(0)->setMapAvailability(TRUE);
@@ -498,12 +524,14 @@ WindowMsgHandledType WOLMapSelectMenuSystem( GameWindow *window, UnsignedInt msg
 						bOfficialMap = it->second.m_isOfficial;
 					}
 
+#if defined(SAGE_USE_NGMP)
 					if (TheNGMPGame)
 					{
 						TheNGMPGame->adjustSlotsForMap();
 						TheNGMPGame->resetAccepted();
 						TheNGMPGame->resetStartSpots();
 					}
+#endif
 					if (TheGameSpyInfo && TheGameSpyInfo->getCurrentStagingRoom())
 					{
 						TheGameSpyInfo->getCurrentStagingRoom()->adjustSlotsForMap();
@@ -514,6 +542,7 @@ WindowMsgHandledType WOLMapSelectMenuSystem( GameWindow *window, UnsignedInt msg
 					WOLDisplaySlotList();
 					WOLDisplayGameOptions();
 
+#if defined(SAGE_USE_NGMP)
 					// NGMP: Update lobby
 					NGMP_OnlineServices_LobbyInterface* pLobbyInterface = NGMP_OnlineServicesManager::GetInterface<NGMP_OnlineServices_LobbyInterface>();
 					if (pLobbyInterface != nullptr)
@@ -521,6 +550,11 @@ WindowMsgHandledType WOLMapSelectMenuSystem( GameWindow *window, UnsignedInt msg
 						AsciiString mapPathToSend = (TheGameSpyInfo && TheGameSpyInfo->getCurrentStagingRoom()) ? TheGameSpyInfo->getCurrentStagingRoom()->getMap() : (TheNGMPGame ? TheNGMPGame->getMap() : asciiMap);
 						pLobbyInterface->UpdateCurrentLobby_Map(strMapName, mapPathToSend, bOfficialMap, newMaxPlayers);
 					}
+#else
+					(void)strMapName;
+					(void)bOfficialMap;
+					(void)newMaxPlayers;
+#endif
 
 					if (WOLMapSelectLayout)
 					{
