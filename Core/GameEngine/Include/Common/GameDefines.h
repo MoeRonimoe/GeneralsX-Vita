@@ -80,7 +80,14 @@
 #endif
 
 #ifndef PRESERVE_RETAIL_SCRIPTED_CAMERA
+#if defined(__vita__)
+// GeneralsX @bugfix Claude 23/11/2026 The cinematics are staged for the retail camera height. Above it, the
+// rocket of Zero Hour's first USA mission stops in view at the end of its animation instead of flying past
+// the camera, and a hill shows beside the cloud backdrop. The camera does not touch the game's logic.
+#define PRESERVE_RETAIL_SCRIPTED_CAMERA (1)
+#else
 #define PRESERVE_RETAIL_SCRIPTED_CAMERA (0) // Retain scripted camera behavior present in retail Generals 1.08 and Zero Hour 1.04
+#endif
 #endif
 
 // GeneralsX @refactor stm 28/08/2026 Import the retail-particle compatibility switch.

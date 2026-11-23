@@ -166,6 +166,7 @@ W3DView::W3DView()
 
 #if PRESERVE_RETAIL_SCRIPTED_CAMERA
 	m_initialGroundLevel = 10.0f;
+	m_scriptedHeightScale = 1.0f;
 #endif
 
 	m_viewFilterMode = FM_VIEW_DEFAULT;
@@ -698,7 +699,7 @@ Real W3DView::getDesiredHeight(Real x, Real y) const
 	// terrain height because the ground level is not updated for it.
 	if (!m_isUserControlled)
 	{
-		return getHeightAroundPos(x, y) + m_heightAboveGround;
+		return getHeightAroundPos(x, y) + m_heightAboveGround * m_scriptedHeightScale;
 	}
 #endif
 
@@ -712,7 +713,7 @@ Real W3DView::getMaxHeight(Real x, Real y) const
 #if PRESERVE_RETAIL_SCRIPTED_CAMERA
 	if (!m_isUserControlled)
 	{
-		return getHeightAroundPos(x, y) + m_maxHeightAboveGround;
+		return getHeightAroundPos(x, y) + m_maxHeightAboveGround * m_scriptedHeightScale;
 	}
 #endif
 
@@ -2288,6 +2289,9 @@ void W3DView::setCameraHeightAboveGroundLimitsToDefault(Real heightScale)
 
 	m_maxHeightAboveGround = TheGlobalData->m_maxCameraHeight * aspectRatioScale * heightScale;
 	m_minHeightAboveGround = TheGlobalData->m_minCameraHeight * aspectRatioScale;
+#if PRESERVE_RETAIL_SCRIPTED_CAMERA
+	m_scriptedHeightScale = aspectRatioScale > 0.0f ? 1.0f / aspectRatioScale : 1.0f;
+#endif
 
 	if (m_minHeightAboveGround > m_maxHeightAboveGround)
 		m_maxHeightAboveGround = m_minHeightAboveGround;
@@ -2301,6 +2305,9 @@ void W3DView::setDefaultView(Real pitch, Real angle, Real maxHeight)
 	//	m_defaultAngle = angle * M_PI/180.0f;
 	setDefaultPitch(pitch);
 	m_maxHeightAboveGround = TheGlobalData->m_maxCameraHeight*maxHeight;
+#if PRESERVE_RETAIL_SCRIPTED_CAMERA
+	m_scriptedHeightScale = 1.0f;
+#endif
 	if (m_minHeightAboveGround > m_maxHeightAboveGround)
 		m_maxHeightAboveGround = m_minHeightAboveGround;
 }

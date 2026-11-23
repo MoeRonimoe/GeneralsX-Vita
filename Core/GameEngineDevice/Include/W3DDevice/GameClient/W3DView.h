@@ -293,6 +293,10 @@ private:
 	// TheSuperHackers @tweak Uses the initial ground level for preserving the original look of the scripted camera,
 	// because alterations to the ground level do affect the positioning in subtle ways.
 	Real m_initialGroundLevel;
+
+	// GeneralsX @bugfix Claude 23/11/2026 What the height limits were scaled by for a screen wider than 4:3,
+	// inverted. The player's camera keeps that scale; a scripted camera is staged for the height without it.
+	Real m_scriptedHeightScale;
 #endif
 
 	Region2D m_cameraAreaConstraints; ///< Camera should be constrained to be within this area
