@@ -36,6 +36,8 @@
 #include "Common/GameMemory.h"
 #include "Common/GlobalData.h"
 #include "Common/version.h"
+#include "GameLogic/AIPathfind.h"
+#include "GameLogic/GameLogic.h"
 
 #include "VitaGameEngine.h"
 
@@ -43,6 +45,7 @@
 #include <VitaPacing.h>
 
 #include <psp2/kernel/processmgr.h>
+#include <psp2/kernel/threadmgr.h>
 #include <psp2/net/net.h>
 #include <psp2/net/netctl.h>
 #include <psp2/power.h>
@@ -212,6 +215,47 @@ void startNetwork()
 }
 
 //-----------------------------------------------------------------------------
+/// Tells the console every few seconds that it is in use, and the log every half minute how far
+/// the logic has come, which times a replay check step by step.
+int keepAwakeThread(SceSize, void *)
+{
+	const SceUInt64 start = sceKernelGetProcessTimeWide();
+	for (unsigned int tick = 1;; ++tick)
+	{
+		sceKernelPowerTick(SCE_KERNEL_POWER_TICK_DEFAULT);
+		sceKernelDelayThread(5 * 1000 * 1000);
+
+		// Read without a lock: a frame number that is one step old does not matter here.
+		if (tick % 6 == 0 && TheGameLogic != nullptr)
+		{
+			fprintf(stderr, "[main] headless: logic frame %u after %.0f s\n", static_cast<unsigned int>(TheGameLogic->getFrame()),
+				(sceKernelGetProcessTimeWide() - start) / 1000000.0);
+		}
+	}
+	return 0;
+}
+
+//-----------------------------------------------------------------------------
+/// The frames of the game tell the console that it is in use (VitaGameEngine::serviceWindowsOS).
+/// "-headless" (with "-replay <file>": check a replay without drawing it) has none, and the
+/// console would dim its screen and go to sleep in the middle of the check.
+void keepAwakeWhenHeadless()
+{
+	for (int i = 1; i < __argc; ++i)
+	{
+		if (strcmp(__argv[i], "-headless") != 0)
+			continue;
+
+		// Behind the game's threads (160): it has nothing urgent to do.
+		const SceUID thread = sceKernelCreateThread("keep awake", keepAwakeThread, 191, 16 * 1024, 0, 0, nullptr);
+		if (thread >= 0)
+			sceKernelStartThread(thread, 0, nullptr);
+		fprintf(stderr, "[main] headless: no frames are drawn, the console is kept awake\n");
+		return;
+	}
+}
+
+//-----------------------------------------------------------------------------
 /// Send the engine's diagnostics to a file on the memory card; there is no console.
 void openLog()
 {
@@ -225,7 +269,13 @@ void openLog()
 	remove(PREVIOUS_LOG_FILE_PATH);
 	rename(LOG_FILE_PATH, PREVIOUS_LOG_FILE_PATH);
 
-	if (freopen(LOG_FILE_PATH, "w", stderr) != nullptr)
+	// Both streams go into the file, and both append: a stream that writes at a position of its
+	// own writes over what the other one wrote there (the replay checks print to stdout).
+	FILE *created = fopen(LOG_FILE_PATH, "w");
+	if (created != nullptr)
+		fclose(created);
+
+	if (freopen(LOG_FILE_PATH, "a", stderr) != nullptr)
 		setvbuf(stderr, nullptr, _IOLBF, 0);
 
 	if (freopen(LOG_FILE_PATH, "a", stdout) != nullptr)
@@ -328,6 +378,15 @@ int main(int argc, char *argv[])
 
 	startNetwork();
 	buildCommandLine();
+	keepAwakeWhenHeadless();
+
+	// "+VITA_PATHFIND_LINE_CACHE=0": the pathfinder checks every cell on its lines again, as
+	// the original did. For showing with a replay that skipping the repeated checks changes nothing.
+	if (getenv("VITA_PATHFIND_LINE_CACHE") != nullptr && atoi(getenv("VITA_PATHFIND_LINE_CACHE")) == 0)
+	{
+		Pathfinder::setRepeatedLineChecksSkipped(FALSE);
+		fprintf(stderr, "[main] the pathfinder checks every cell on its lines again\n");
+	}
 
 	// "+VITA_PROFILE=1" in vita_args.txt: measure where the time of a frame goes and write
 	// it to the log every few seconds. Off by default, because measuring costs time itself.
