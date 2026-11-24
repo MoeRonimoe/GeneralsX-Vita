@@ -11,6 +11,7 @@
 
 #include <unistd.h>
 #include <climits>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <dirent.h>
@@ -72,16 +73,48 @@ inline int DeleteFile(const char* path) {
 
 // GeneralsX @build BenderAI 12/02/2026 CopyFile stub for Linux
 // Replay save system needs this to duplicate .rep files
+// GeneralsX @bugfix Claude 24/11/2026 Copy with stdio instead of std::filesystem::copy_file.
+// With the PS Vita's newlib, copy_file created the new file but did not copy its contents, so
+// saving a replay from the score screen left an empty file and showed "File operation failed".
+// fopen/fread/fwrite are what the engine reads and writes its files with on every platform.
 inline int CopyFile(const char* existingFile, const char* newFile, int failIfExists) {
-  try {
-    std::filesystem::copy_options opts = failIfExists 
-      ? std::filesystem::copy_options::none 
-      : std::filesystem::copy_options::overwrite_existing;
-    std::filesystem::copy_file(existingFile, newFile, opts);
-    return 1; // TRUE
-  } catch (...) {
+  struct stat existing;
+  if (failIfExists && stat(newFile, &existing) == 0) {
     return 0; // FALSE
   }
+
+  FILE* in = fopen(existingFile, "rb");
+  if (in == nullptr) {
+    return 0; // FALSE
+  }
+  FILE* out = fopen(newFile, "wb");
+  if (out == nullptr) {
+    fclose(in);
+    return 0; // FALSE
+  }
+
+  bool copied = true;
+  char buffer[16 * 1024];
+  size_t count;
+  while ((count = fread(buffer, 1, sizeof(buffer), in)) > 0) {
+    if (fwrite(buffer, 1, count, out) != count) {
+      copied = false;
+      break;
+    }
+  }
+  if (ferror(in)) {
+    copied = false;
+  }
+  fclose(in);
+  if (fclose(out) != 0) {
+    copied = false;
+  }
+
+  // A partial copy is not left behind as if it were the file.
+  if (!copied) {
+    remove(newFile);
+  }
+  return copied ? 1 : 0;
 }
 
 // GeneralsX @build BenderAI 12/02/2026 FormatMessageW stub for Linux
