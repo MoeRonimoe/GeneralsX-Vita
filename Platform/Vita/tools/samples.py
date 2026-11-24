@@ -1,7 +1,7 @@
 """Turns the samples of compat/VitaSampler.cpp into a list of functions by time.
 
     samples.py <vita_samples.bin> <symbols> <elf> [--all] [--after NAME] [--frames FIRST-LAST] [--still | --moving]
-               [--top N] [--callers NAME] [--callees NAME] [--frame-ms MS]
+               [--slow MS] [--top N] [--callers NAME] [--callees NAME] [--frame-ms MS]
 
 <symbols> is the output of "arm-vita-eabi-nm -C --defined-only" for the program that ran,
 <elf> the program itself (the file the .self was made from).
@@ -31,7 +31,9 @@ part of that; "--after GameLogic::tryStartNewGame" leaves out everything up to t
 sample with that function on the stack, which is the loading. Every sample says which step
 of the mission's logic it was taken in: --frames takes the samples of some steps, --still
 those of steps that lasted a second or more, which is the game standing still for a message
-or a pause and doing nothing but draw the same picture, --moving the others. --callers lists who called
+or a pause and doing nothing but draw the same picture, --moving the others. --slow takes the
+samples of steps that lasted at least that many milliseconds, which is where a game that keeps
+its speed stutters: a battle in which single steps take half a second. --callers lists who called
 a function when it was the one named, --callees what was named while the function was on the
 stack. --frame-ms turns the shares into milliseconds of a frame of that length.
 """
@@ -144,7 +146,8 @@ class Program:
 
 def main():
     arguments = sys.argv[1:]
-    options = {'--top': 40, '--callers': None, '--callees': None, '--frame-ms': None, '--after': None, '--frames': None}
+    options = {'--top': 40, '--callers': None, '--callees': None, '--frame-ms': None, '--after': None, '--frames': None,
+               '--slow': None}
     use_all = '--all' in arguments
     if use_all:
         arguments.remove('--all')
@@ -243,6 +246,20 @@ def main():
             per_step[sample[2]] = per_step.get(sample[2], 0) + 1
         used = [s for s in used if (per_step[s[2]] >= long_enough) == still]
         print('%d of them while the game %s' % (len(used), 'stood still' if still else 'was running'))
+
+    if options['--slow']:
+        # How long a step lasted, told by how many samples were taken in it.
+        slow_enough = max(1, int(float(options['--slow']) * 1000 / period))
+        per_step = {}
+        for sample in used:
+            per_step[sample[2]] = per_step.get(sample[2], 0) + 1
+        slow_steps = sorted(step for step, count in per_step.items() if count >= slow_enough)
+        used = [s for s in used if per_step[s[2]] >= slow_enough]
+        print('%d of them in the %d of %d steps that lasted %s ms or more' % (
+            len(used), len(slow_steps), len(per_step), options['--slow']))
+        if slow_steps:
+            print('  those steps: %s' % ' '.join('%d (%d ms)' % (step, per_step[step] * period // 1000)
+                                                  for step in slow_steps[:60]))
 
     if options['--after']:
         last = -1
