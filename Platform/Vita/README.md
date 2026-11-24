@@ -20,15 +20,17 @@ and to need fixes guided by the log file and core dumps.
 **Zero Hour builds and runs as well (preset `vita-zh`).** Its menus and movies work, and
 the first missions of two campaigns were played to their end on a console, the first USA
 mission with its opening film and its train ride. Memory is what limits it: that mission
-takes the top of the 300 MB heap to 289 MB (see the notes at the end). The frame time work
-of the base game (tree batch, skipped drawables, sleepy update heap, relation arrays) has
-not been carried over.
+takes the top of the 300 MB heap to 287 MB (see the notes at the end). A skirmish against
+seven hard computer players runs, but at 3 to 10 frames per second once the armies have
+grown: the game logic alone takes about 200 ms per step then (5 steps per second), and the
+heap's top reached 271 MB. The frame time work of the base game (tree batch, skipped
+drawables, sleepy update heap, relation arrays) has not been carried over.
 
 | Area | State |
 | --- | --- |
 | Engine, game logic, WW3D renderer | compile unchanged for ARM (Cortex-A9, 32 bit, hard float) |
 | Graphics | Direct3D 8 implemented on vitaGL's fixed function pipeline (`d3d8/`); menus and 3D scenes render, with the approximations listed under "How the graphics layer works" |
-| Input | touch screen, sticks and buttons mapped to mouse and keyboard (`Device/`); works in the menus |
+| Input | touch screen, sticks and buttons mapped to mouse and keyboard (`Device/`); works in the menus; text fields through the console's on-screen keyboard |
 | Mouse pointer | a plain arrow drawn by `VitaMouse`; the game's animated `.ani` cursors are not loaded, and the retail data has no other pointer images |
 | Audio | sound effects, speech and music through miniaudio (`Device/VitaAudioManager`, `Device/VitaAudioLoader`), behind the build option `VITA_AUDIO`; heard on a console, see "Sound" for what is still open |
 | Video (intro, campaign movies) | Bink through FFmpeg when `tools/build-ffmpeg.sh` has been run, see "Movies"; skipped without it |
@@ -148,6 +150,7 @@ instead; the platform layer reads its switches for experiments that way:
 | `VITA_NO_AUDIO` | a build with sound runs silent, to compare frame times |
 | `VITA_AUDIO_CACHE_MB` | memory for decoded sound effects (default 40; less while the heap is low, see the notes at the end) |
 | `VITA_RENDER_THREAD` | `0` has the game's thread make the calls to vitaGL itself, as it did before there was a render thread (see "The render thread") |
+| `VITA_PATHFIND_LINE_CACHE` | `0`: the pathfinder checks every cell on its lines toward the goal again, as the original did, for showing with a replay that skipping the repeated checks changes nothing (see the notes at the end) |
 | `VITA_BUFFERED_READS` | large reads go through the C library's buffer again, a kilobyte per request (see the notes at the end) |
 | `VITA_SAMPLE` | in a measuring build (`VITA_CALL_PROFILE`): samples per second of the game's thread, written to `vita_samples.bin` at the end (see "Finding out where the time goes") |
 | `VITA_CATCHUP` | `0`: one step of the logic per picture, the game in slow motion where the console cannot draw 30 pictures per second (see "The speed of the game") |
@@ -395,7 +398,8 @@ register and leaves a mark only for the game's thread.
 Every sample carries the step of the mission's logic it was taken in. `--frames 450-1050`
 takes the samples of those steps, `--still` those of steps that lasted a second or more,
 which is the game standing still for a message and doing nothing but draw, and `--moving`
-the others. What to trust: the list by a function's own time for functions that do real
+the others. `--slow 300` takes those of steps that lasted 300 ms or more and lists them,
+which is where a game that keeps its speed stutters. What to trust: the list by a function's own time for functions that do real
 work, and `--callers` for a function that is called directly. The shares "with what it
 calls" are too large for some functions and too small for others, because the stack is
 read without knowing its frames; the engine's timers are the better source for those.
@@ -407,6 +411,25 @@ around it says, and add one if there is none.
 
 The simpler way, stopping the game's thread from outside and reading its registers, is
 not open to a program like this one: `sceKernelSuspendThreadForVM()` answers 0x80020008.
+
+**Changes to the game logic** must leave every step as it was, or replays and network games
+fall apart, and a replay is also the fairest benchmark for them: the same work in every run.
+With
+
+```
+-headless -replay game.rep -replayCRCTrace
+```
+
+in `vita_args.txt` (the replay in `UserData/GeneralsX/GeneralsZH/Replays`) the game plays
+the replay without drawing it, as fast as it can, writes every check of the game's state
+as a `[crc] frame N computed X recorded Y` line, and plays on after a mismatch instead of
+stopping. The screen stays dark, the console is kept awake, every 30 seconds a
+`[main] headless: logic frame N after T s` line times the run, and at the end the game
+goes back to the LiveArea. Two runs of one replay, one with the change and one without
+(`+VITA_PATHFIND_LINE_CACHE=0` is such a switch), must give the same `computed` values at
+every check, and the frame lines compare their speed. Replays recorded on the console do
+not match their recording to the end, see the notes at the end; that does not spoil the
+comparison of two builds.
 
 ## Profile guided optimization
 
@@ -488,6 +511,13 @@ While only the executable changes there is no need to reinstall the package: rep
 | Start | Escape |
 | Select | jump to the last radar event (Space) |
 | L + R + Select | switch between the game at its speed with fewer pictures and one step per picture, see "The speed of the game" |
+
+A tap on a text field, or Cross with the pointer on it, opens the console's on-screen
+keyboard with the field's text in it (`Device/VitaTextInput.cpp`). What is confirmed there
+replaces the text, one character at a time through the field's own input, so its rules on
+length and characters apply; then comes the Enter of a keyboard, which sends a chat line or
+saves a replay. Cancelling leaves the field as it was. While the keyboard is open, and until
+every button and the screen have been let go after it closed, the game gets no input.
 
 The map does not scroll when the pointer touches an edge of the screen, whatever
 Options.ini says (`LookAtTranslator::canScrollAtScreenEdge()`): the pointer rests at the
@@ -1069,9 +1099,11 @@ calls vitaGL directly; that file does not include `VitaD3D8GL.h`.
   - The decoded sound effects give way while less than 48 MB of the heap are free, down to
     8 MB of them (`VitaAudioManager::updateEffectBudget()`).
 
-  That mission still takes the top of the heap to 289 MB, with 263 MB in use at its peak.
-  The terrain rebuild does its work twice in one frame (`initHeightData()`, then
-  `updateCenter()`) and costs about a second.
+  That mission still takes the top of the heap to 287 MB, with 263 MB in use at its peak.
+  The terrain rebuild did its work twice in one frame (`initHeightData()`, then
+  `updateCenter()`); `setTerrainDrawSize(..., TRUE)` from `W3DView::updateTerrain()` now
+  leaves the first fill out, since the second one follows, and the rebuild of the rocket
+  shot went from 1012 ms to 558 ms.
 - The cinematics are staged for the retail camera height. `setCameraHeightAboveGroundLimitsToDefault()`
   scales the height limits for a screen wider than 4:3, and a script's final zoom is relative
   to them, so on the console the camera of the rocket shot in Zero Hour's first USA mission
@@ -1083,6 +1115,39 @@ calls vitaGL directly; that file does not include `VitaD3D8GL.h`.
 - `LookAtTranslator::resetModes()`, which a script calls when it takes the input away, only
   cleared the scrolling flag and left the tactical view's mouse lock on, with nothing left to
   release it; the windows then get no input, which is how the score screen came to ignore
-  clicks. It ends the scrolling properly now, and logs an `[input]` line when it does. That
-  this was the cause on the console is likely but not shown: the run after the fix did not
-  scroll at that moment.
+  clicks. It ends the scrolling properly now, and logs an `[input]` line when it does. A run
+  that held the right stick while a script took the input over logged that line, and the
+  score screen took its clicks afterwards.
+- Zero Hour asks for the font "Arial Unicode MS" for every drawable it creates
+  (`ResolveDrawableCaptionFont()` in `Drawable.cpp`), and every new font asks for it as its
+  Unicode fallback. The console has no such font, and each search set FreeType up and probed
+  up to 54 paths on the memory card: 2328 times in one skirmish. `render2dsentence.cpp` now
+  remembers the names it could not locate and sets FreeType up only once a file is found.
+- The pathfinder, not the drawing, is what slows a skirmish of eight armies down: in a
+  sampling build it had 55 % of the game's thread, 24 to 193 ms per frame. For every cell it
+  expands, `examineNeighboringCells()` walks the straight line from that cell to the goal
+  (`iterateCellsAlongLine()` with `examineCellsCallback()`), and the lines of one search run
+  over the same cells again and again, each time checking the cell for obstacles and units
+  (`checkForMovement()`). Whether a cell passes those checks only depends on the cell and on
+  what stays the same during a search, so a cell that passed them is now stamped with the
+  search (`PathfindCellInfo::m_lineCheckStamp`) and not checked again in it; the stamp moves
+  on at the end of every search and when the object or its settings change. The ground
+  height of an expanded cell is only looked up when a downhill locomotor or a cliff needs it.
+  The budget of 5000 cells per step stays as it is, it is part of the logic. Shown to change
+  nothing with a replay of a seven-AI skirmish played with the checks skipped and with them
+  made again (`+VITA_PATHFIND_LINE_CACHE=0`): the same game state at all 119 checks up to step
+  11800. That replay took 1218 s instead of 1331 s from step 2000 to 11700, 8.5 % less; the
+  sampling build had made the checks look like a third of the time, because the calls it
+  adds to every function are most of the cost of small ones.
+- Replays recorded on the console do not play back as they were played: two seven-AI
+  skirmishes left their recordings at step 3300 and at step 5000. Both settings of the
+  pathfinder computed the same state there, so the pathfinder is not the cause; what is, is
+  not known yet. Played without drawing, the second one also ran the heap full at step 11800,
+  with and without the render thread.
+- Saving a replay from the score screen left an empty file and showed "File operation
+  failed": `CopyFile()` of the compatibility layer used `std::filesystem::copy_file()`, which
+  creates the new file with the console's newlib but copies nothing into it. It copies with
+  `fopen`/`fread`/`fwrite` now, in both games' `file_compat.h`.
+- The log is one file for both stderr and stdout. stderr wrote at a position of its own and
+  wrote over what stdout had appended (the replay checks print to stdout), so both streams
+  are opened to append now.

@@ -33,6 +33,7 @@ Common command line parameters for `GeneralsX` (Generals) and `GeneralsXZH` (Zer
 | `-replay <file>` | Play a replay file | `./GeneralsXZH -replay match.rep` |
 | `-jobs <count>` | Number of parallel replay jobs | `./GeneralsXZH -jobs 4 -replay *.rep` |
 | `-headless` | Run without graphics (replay testing) | `./GeneralsXZH -headless -replay *.rep` |
+| `-replayCRCTrace` | With `-replay`: log every CRC check as `[crc] frame N computed X recorded Y` to stderr and play on after a mismatch instead of stopping. Two builds that play the same replay this way can be compared check by check, also after both have left the recorded game | `./GeneralsXZH -headless -replay match.rep -replayCRCTrace` |
 
 ## Common Combinations
 
@@ -47,6 +48,15 @@ Launch in windowed mode, skip intro.
 ./GeneralsXZH -jobs 4 -headless -replay subfolder/*.rep
 ```
 Test multiple replays in parallel without graphics (requires optimized VC6 build with `RTS_BUILD_OPTION_DEBUG=OFF`).
+
+### Comparing Two Builds on One Replay
+```bash
+./GeneralsXZH -headless -replay match.rep -replayCRCTrace 2> old.log   # build A
+./GeneralsXZH -headless -replay match.rep -replayCRCTrace 2> new.log   # build B
+diff <(grep '^\[crc\]' old.log) <(grep '^\[crc\]' new.log)
+```
+A change meant to leave the game logic as it was must give the same `computed` values at every
+check, whether or not the replay itself still matches its recording.
 
 ### High Resolution Testing
 ```bash
