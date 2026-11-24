@@ -108,6 +108,18 @@ Real s_pointerY = VitaInput::SCREEN_HEIGHT * 0.5f;
 UnsignedInt s_lastPollMs = 0;
 UnsignedInt s_lastZoomMs = 0;
 
+// See VitaInput::setBlocked().
+Bool s_blocked = FALSE;
+Bool s_waitingForRelease = FALSE;
+
+// The buttons of the pad; the other bits of a sample say other things (headphones, volume).
+const unsigned int PAD_BUTTONS = 0xFFFFu;
+
+// The last release of the left mouse button, for VitaInput::takeLeftRelease().
+Bool s_leftReleased = FALSE;
+Int s_leftReleaseX = 0;
+Int s_leftReleaseY = 0;
+
 // A fingertip covers a soldier several times over, and the engine picks what is under one
 // exact pixel. A tap that hits nothing is therefore moved onto the nearest unit within this
 // many panel pixels (about three millimetres). The environment variable
@@ -359,6 +371,26 @@ void VitaInput::poll()
 		return;
 	}
 
+	// --- a dialog of the system has the controls ---------------------------------
+	if (s_blocked || s_waitingForRelease)
+	{
+		// Its samples are passed over, so that none of them turns into an event later.
+		s_lastPadStamp = pad.timeStamp;
+		s_previousButtons = pad.buttons;
+		if (touchCount > 0)
+		{
+			const SceTouchData &touch = touches[touchOrder[touchCount - 1]];
+			s_lastTouchStamp = touch.timeStamp;
+			s_touchActive = touch.reportNum > 0;
+		}
+		if (TheLookAtTranslator != nullptr)
+			TheLookAtTranslator->setAnalogScroll(0.0f, 0.0f);
+
+		if (!s_blocked && (pad.buttons & PAD_BUTTONS) == 0 && !s_touchActive)
+			s_waitingForRelease = FALSE;
+		return;
+	}
+
 	// --- touch -----------------------------------------------------------------
 	Bool touching = s_touchActive;
 	for (int step = 0; step < touchCount; ++step)
@@ -422,6 +454,9 @@ void VitaInput::poll()
 			Int y = 0;
 			gamePointer(x, y);
 			mouse->addButtonEvent(VitaMouse::BUTTON_LEFT, FALSE, x, y, time);
+			s_leftReleased = TRUE;
+			s_leftReleaseX = x;
+			s_leftReleaseY = y;
 		}
 
 		s_touchActive = touching;
@@ -495,7 +530,12 @@ void VitaInput::poll()
 			if (pressed & SCE_CTRL_CROSS)
 				mouse->addButtonEvent(VitaMouse::BUTTON_LEFT, TRUE, pointerX, pointerY, time);
 			if (released & SCE_CTRL_CROSS)
+			{
 				mouse->addButtonEvent(VitaMouse::BUTTON_LEFT, FALSE, pointerX, pointerY, time);
+				s_leftReleased = TRUE;
+				s_leftReleaseX = pointerX;
+				s_leftReleaseY = pointerY;
+			}
 
 			if (pressed & SCE_CTRL_CIRCLE)
 				mouse->addButtonEvent(VitaMouse::BUTTON_RIGHT, TRUE, pointerX, pointerY, time);
@@ -532,4 +572,48 @@ void VitaInput::poll()
 	// arrow keys, which scroll in the base game; Zero Hour binds them to selecting units.
 	if (TheLookAtTranslator != nullptr)
 		TheLookAtTranslator->setAnalogScroll(readAxis(pad.rx), readAxis(pad.ry));
+}
+
+//-----------------------------------------------------------------------------
+void VitaInput::setBlocked(bool blocked)
+{
+	if (blocked && !s_blocked)
+	{
+		// What the game holds is let go now; the dialog's controls must not leave it held.
+		if (TheVitaMouse != nullptr)
+		{
+			Int x = 0;
+			Int y = 0;
+			gamePointer(x, y);
+			if (s_touchActive || (s_previousButtons & SCE_CTRL_CROSS) != 0)
+				TheVitaMouse->addButtonEvent(VitaMouse::BUTTON_LEFT, FALSE, x, y, nowMs());
+			if ((s_previousButtons & SCE_CTRL_CIRCLE) != 0)
+				TheVitaMouse->addButtonEvent(VitaMouse::BUTTON_RIGHT, FALSE, x, y, nowMs());
+		}
+		if (TheVitaKeyboard != nullptr)
+		{
+			for (const ButtonKey &mapping : s_buttonKeys)
+			{
+				if (s_previousButtons & mapping.button)
+					TheVitaKeyboard->addKeyEvent(mapping.key, FALSE);
+			}
+		}
+	}
+
+	s_blocked = blocked;
+	if (!blocked)
+		s_waitingForRelease = TRUE;
+	s_leftReleased = FALSE;
+}
+
+//-----------------------------------------------------------------------------
+bool VitaInput::takeLeftRelease(int &x, int &y)
+{
+	if (!s_leftReleased)
+		return false;
+
+	s_leftReleased = FALSE;
+	x = s_leftReleaseX;
+	y = s_leftReleaseY;
+	return true;
 }

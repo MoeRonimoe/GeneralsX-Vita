@@ -18,10 +18,12 @@ add_library(vita_compat STATIC
     compat/VitaPacing.cpp
     compat/VitaPosix.cpp
     compat/VitaSampler.cpp
+    compat/VitaSystemDialog.cpp
     compat/VitaYuv.cpp
     compat/include/VitaDiagnostics.h
     compat/include/VitaHelper.h
     compat/include/VitaPacing.h
+    compat/include/VitaSystemDialog.h
     compat/include/VitaYuv.h
     compat/include/dlfcn.h
     compat/include/ifaddrs.h
@@ -93,6 +95,8 @@ target_sources(vita_device INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/Device/VitaMouse.h
     ${CMAKE_CURRENT_SOURCE_DIR}/Device/VitaNoVideoPlayer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/Device/VitaSilentAudioManager.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Device/VitaTextInput.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Device/VitaTextInput.h
 )
 target_include_directories(vita_device INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/Device)
 
@@ -169,6 +173,9 @@ target_link_libraries(vita_device INTERFACE
     vita_d3d8
     SceCtrl_stub
     SceTouch_stub
+    SceCommonDialog_stub
+    SceAppUtil_stub
+    SceSysmodule_stub
 )
 
 add_library(vita_main INTERFACE)

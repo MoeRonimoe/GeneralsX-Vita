@@ -36,6 +36,7 @@ cp "$VITAGL_HEADER" "$OUT/include/"
 	"$HERE/driver.cpp" "$HERE/mockgl.cpp" \
 	"$LAYER/VitaD3D8Device.cpp" "$LAYER/VitaD3D8Direct3D.cpp" "$LAYER/VitaD3D8Format.cpp" \
 	"$LAYER/VitaD3D8RenderThread.cpp" "$LAYER/VitaD3D8Resources.cpp" "$LAYER/VitaD3D8State.cpp" \
+	"$HERE/../../compat/VitaSystemDialog.cpp" \
 	-lpthread
 
 VITA_RENDER_THREAD=0 "$OUT/test-$NAME" "$OUT/$NAME-direct.txt" "$FRAMES" "$SEED" 2> "$OUT/$NAME-direct.log" || { tail -n 30 "$OUT/$NAME-direct.log"; exit 1; }

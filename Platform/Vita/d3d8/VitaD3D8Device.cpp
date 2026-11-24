@@ -24,6 +24,7 @@
 #include "VitaD3D8Device.h"
 
 #include <VitaDiagnostics.h>
+#include <VitaSystemDialog.h>
 
 #include <psp2/kernel/processmgr.h>
 
@@ -789,7 +790,8 @@ HRESULT STDMETHODCALLTYPE Device::Reset(D3DPRESENT_PARAMETERS *pPresentationPara
 HRESULT STDMETHODCALLTYPE Device::Present(const RECT *src_rect, const RECT *dst_rect, HWND dst_window_override, const RGNDATA *dirty_region)
 {
 	const uint64_t start = VitaDiagnostics::now();
-	vglSwapBuffers(GL_FALSE);
+	// A dialog of the system (the on-screen keyboard) is drawn into the picture by vitaGL.
+	vglSwapBuffers(VitaSystemDialog::isShown() ? GL_TRUE : GL_FALSE);
 	g_frameStatistics.presentTime += VitaDiagnostics::now() - start;
 
 	LogFrameStatistics();

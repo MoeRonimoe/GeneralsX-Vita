@@ -24,6 +24,7 @@
 
 #include "VitaInput.h"
 #include "VitaSilentAudioManager.h"
+#include "VitaTextInput.h"
 
 #include "Common/GameAudio.h"
 #include "Common/GlobalData.h"
@@ -369,6 +370,7 @@ void VitaGameEngine::serviceWindowsOS()
 	VitaDiagnostics::g_sampleTag = TheGameLogic != nullptr && TheGameLogic->isInGame() && !TheGameLogic->isInShellGame()
 		&& TheGameLogic->getFrame() > 1 ? TheGameLogic->getFrame() : 0;
 
+	VitaTextInput::update();
 	VitaInput::poll();
 }
 

@@ -48,4 +48,13 @@ namespace VitaInput
 
 	/// Read the controls and queue events on TheMouse and TheKeyboard. Call once per frame.
 	void poll();
+
+	/// While a dialog of the system is open (VitaTextInput) the controls are its own and
+	/// the game gets nothing. After it closes, nothing reaches the game until every button
+	/// and the panel have been let go, so the press that closed it is not the game's either.
+	void setBlocked(bool blocked);
+
+	/// Whether the left mouse button (a tap, or Cross) was let go since the last call, and
+	/// where, in the game's screen coordinates.
+	bool takeLeftRelease(int &x, int &y);
 }
