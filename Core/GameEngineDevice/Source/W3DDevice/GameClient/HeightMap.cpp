@@ -1085,6 +1085,7 @@ m_desiredDrawWidth(WorldHeightMap::NORMAL_DRAW_WIDTH),
 m_desiredDrawHeight(WorldHeightMap::NORMAL_DRAW_HEIGHT),
 m_oversizeDrawWidth(0),
 m_oversizeDrawHeight(0),
+m_centerUpdateFollows(FALSE),
 m_indexBuffer(nullptr),
 m_numVBTilesX(0),
 m_numVBTilesY(0),
@@ -1197,7 +1198,7 @@ void HeightMapRenderObjClass::oversizeTerrain(Int tilesToOversize)
 	}
 }
 
-void HeightMapRenderObjClass::setTerrainDrawSize(Int width, Int height)
+void HeightMapRenderObjClass::setTerrainDrawSize(Int width, Int height, Bool centerUpdateFollows)
 {
 	if (m_map == nullptr)
 		return;
@@ -1232,7 +1233,9 @@ void HeightMapRenderObjClass::setTerrainDrawSize(Int width, Int height)
 		m_shroud->reset();
 	//delete m_shroud;
 	//m_shroud = nullptr;
+	m_centerUpdateFollows = centerUpdateFollows;
 	initHeightData(m_map->getDrawWidth(), m_map->getDrawHeight(), m_map, nullptr, FALSE);
+	m_centerUpdateFollows = FALSE;
 	scheduleFullUpdate();
 }
 
@@ -1371,7 +1374,14 @@ Int HeightMapRenderObjClass::initHeightData(Int x, Int y, WorldHeightMap *pMap, 
 		//go with a preset material for now.
 	}
 
-	updateBlock(0,0,x-1,y-1,pMap,pLightsIterator);
+	// GeneralsX @performance Claude 23/11/2026 When the view resizes the terrain, updateCenter() follows at
+	// once and fills every vertex again, with the new draw area and the lights. Filling them here too
+	// doubled the time of the rebuild and what it uploads: about 20 MB in one frame on a large terrain.
+	const Bool filledNext = m_centerUpdateFollows && !m_updating && m_vertexBufferTiles != nullptr && x == m_x && y == m_y;
+	if (!filledNext)
+	{
+		updateBlock(0,0,x-1,y-1,pMap,pLightsIterator);
+	}
 
 	return 0;
 }

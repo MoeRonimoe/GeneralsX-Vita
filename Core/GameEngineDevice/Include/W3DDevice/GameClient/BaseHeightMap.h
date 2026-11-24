@@ -117,7 +117,10 @@ public:
 	virtual void doPartialUpdate(const IRegion2D &partialRange, WorldHeightMap *htMap, RefRenderObjListIterator *pLightsIterator) = 0;
 	virtual void staticLightingChanged();
 	virtual void oversizeTerrain(Int tilesToOversize) = 0; ///< Oversize the visible terrain area.
-	virtual void setTerrainDrawSize(Int width, Int height) = 0; ///< Resize the visible terrain area. Always defaults to oversize dimensions when oversize is set.
+	/// Resize the visible terrain area. Always defaults to oversize dimensions when oversize is set.
+	/// GeneralsX @performance Claude 23/11/2026 centerUpdateFollows: the caller calls updateCenter() right
+	/// after this, which fills all of the terrain's vertices, so they need not be filled here as well.
+	virtual void setTerrainDrawSize(Int width, Int height, Bool centerUpdateFollows = FALSE) = 0;
 	virtual void reset();
 
   void redirectToHeightmap( WorldHeightMap *pMap )

@@ -81,7 +81,7 @@ public:
 	virtual void doPartialUpdate(const IRegion2D &partialRange, WorldHeightMap *htMap, RefRenderObjListIterator *pLightsIterator) override;
 
 	virtual void oversizeTerrain(Int tilesToOversize) override; ///< Oversize the visible terrain area.
-	virtual void setTerrainDrawSize(Int width, Int height) override; ///< Resize the visible terrain area. Always defaults to oversize dimensions when oversize is set.
+	virtual void setTerrainDrawSize(Int width, Int height, Bool centerUpdateFollows = FALSE) override; ///< Resize the visible terrain area. Always defaults to oversize dimensions when oversize is set.
 
 	virtual int updateBlock(Int x0, Int y0, Int x1, Int y1, WorldHeightMap *pMap, RefRenderObjListIterator *pLightsIterator) override;
 
@@ -98,6 +98,7 @@ protected:
 	Int m_desiredDrawHeight; // Regular draw height requested by the view system.
 	Int m_oversizeDrawWidth; // Oversize draw width required by mission scripts for cinematic sequences.
 	Int m_oversizeDrawHeight; // Oversize draw height required by mission scripts for cinematic sequences.
+	Bool m_centerUpdateFollows; // While resizing: updateCenter() comes next and fills the vertices.
 	DX8IndexBufferClass			*m_indexBuffer;	///<indices defining triangles in a VB tile.
 	Int	m_numVBTilesX;	///<dimensions of array containing all the vertex buffers
 	Int	m_numVBTilesY;	///<dimensions of array containing all the vertex buffers

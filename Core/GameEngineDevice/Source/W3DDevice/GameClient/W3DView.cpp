@@ -3875,7 +3875,8 @@ void W3DView::updateTerrain()
 			drawSize.x = static_cast<Int>(drawSize.x * terrainScale);
 			drawSize.y = static_cast<Int>(drawSize.y * terrainScale);
 		}
-		TheTerrainRenderObject->setTerrainDrawSize(drawSize.x, drawSize.y);
+		// GeneralsX @performance Claude 23/11/2026 updateCenter() below fills the vertices of the new size.
+		TheTerrainRenderObject->setTerrainDrawSize(drawSize.x, drawSize.y, TRUE);
 	}
 
 	RefRenderObjListIterator *it = W3DDisplay::m_3DScene->createLightsIterator();
