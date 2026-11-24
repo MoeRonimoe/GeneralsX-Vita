@@ -379,6 +379,26 @@ private:
 
 	ObjectID m_ignoreObstacleID;									///< Ignore the given obstacle
 
+public:
+	// GeneralsX @performance Claude 24/11/2026 Whether examineCellsCallback skips the checks a cell passed
+	// before in the same search (default). Switched off only to show that skipping them changes nothing:
+	// a replay recorded with one setting must play back without a mismatch with the other.
+	static void setRepeatedLineChecksSkipped(Bool skipped) { s_skipRepeatedLineChecks = skipped; }
+
+private:
+	static Bool s_skipRepeatedLineChecks;
+
+	// GeneralsX @performance Claude 24/11/2026 For examineCellsCallback: the stamp of the current search,
+	// and what the checks of a cell depend on besides the cell, for telling one search from the next.
+	UnsignedInt m_lineCheckStamp;
+	const Object *m_lineCheckObject;
+	const LocomotorSet *m_lineCheckLocomotorSet;
+	ObjectID m_lineCheckIgnoreID;
+	Int m_lineCheckRadius;
+	Bool m_lineCheckCenterInCell;
+	Bool m_lineCheckIsHuman;
+	void nextLineCheckStamp();
+
 	PathfindZoneManager m_zoneManager;						///< Handles the pathfind zones.
 
 	PathfindLayer m_layers[LAYER_LAST+1];

@@ -1138,6 +1138,20 @@ void PathfindCellInfo::allocateCellInfos()
 		s_infoArray[i].m_pathParent = &s_infoArray[i+1];
 		s_infoArray[i].m_isFree = true;
 	}
+	clearLineCheckStamps();
+}
+
+/**
+ * GeneralsX @performance Claude 24/11/2026 Forgets every pass of the line checks of examineCellsCallback.
+ */
+void PathfindCellInfo::clearLineCheckStamps()
+{
+	if (s_infoArray == nullptr) {
+		return;
+	}
+	for (Int i=0; i<CELL_INFOS_TO_ALLOCATE; i++) {
+		s_infoArray[i].m_lineCheckStamp = 0;
+	}
 }
 
 /**
@@ -1187,6 +1201,7 @@ PathfindCellInfo *PathfindCellInfo::getACellInfo(PathfindCell *cell,const ICoord
 		info->m_obstacleIsFence = false;
 		info->m_obstacleIsTransparent = false;
 		info->m_blockedByAlly = false;
+		info->m_lineCheckStamp = 0;
 	}
 	return info;
 }
@@ -4023,6 +4038,15 @@ void Pathfinder::reset()
 	m_ignoreObstacleID = INVALID_ID;
 	m_isTunneling = false;
 
+	m_lineCheckStamp = 1;
+	m_lineCheckObject = nullptr;
+	m_lineCheckLocomotorSet = nullptr;
+	m_lineCheckIgnoreID = INVALID_ID;
+	m_lineCheckRadius = 0;
+	m_lineCheckCenterInCell = false;
+	m_lineCheckIsHuman = false;
+	PathfindCellInfo::clearLineCheckStamps();
+
 	m_moveAlliesDepth = 0;
 
 	// pathfind grid cells have not been classified yet
@@ -4973,6 +4997,24 @@ void Pathfinder::cleanOpenAndClosedLists() {
 #endif
 
 	m_cumulativeCellsAllocated += count;
+
+	// A search is over: what it found out about cells does not hold for the next one.
+	nextLineCheckStamp();
+}
+
+Bool Pathfinder::s_skipRepeatedLineChecks = TRUE;
+
+//
+// GeneralsX @performance Claude 24/11/2026 Begins a new search for examineCellsCallback.
+//
+void Pathfinder::nextLineCheckStamp()
+{
+	++m_lineCheckStamp;
+	if (m_lineCheckStamp == 0) {
+		// After four billion searches the stamps begin again, and old ones must not match.
+		PathfindCellInfo::clearLineCheckStamps();
+		m_lineCheckStamp = 1;
+	}
 }
 
 
@@ -6120,11 +6162,20 @@ struct ExamineCellsStruct
 	PathfindCell				*goalCell;
 };
 
+// GeneralsX @performance Claude 24/11/2026 Skip the checks a cell has passed before in the same search.
+// examineNeighboringCells walks the straight line from every cell it expands to the goal, and the lines
+// of one search run over the same cells again and again. Whether a cell passes the checks below depends
+// only on the cell and on what stays the same during a search (the object, its locomotors, radius,
+// ignored obstacle, the units in the cells), so a cell that passed them once in a search passes them
+// again; everything after the checks still happens for it as before, which keeps the result the same.
+// In battles of many armies on the PS Vita these checks were a third of the time of a step of the logic.
 /*static*/ Int Pathfinder::examineCellsCallback(Pathfinder* pathfinder, PathfindCell* from, PathfindCell* to, Int to_x, Int to_y, void* userData)
 {
 	ExamineCellsStruct* d = (ExamineCellsStruct*)userData;
 	if (d->thePathfinder->m_isTunneling) return 1; // abort.
 	if (from && to) {
+		const Bool checksPassed = s_skipRepeatedLineChecks && to->passedLineChecks(d->thePathfinder->m_lineCheckStamp);
+		if (!checksPassed) {
 			if (!d->thePathfinder->validMovementPosition( d->isCrusher, d->theLoco->getValidSurfaces(), to, from )) {
 				return 1;
 			}
@@ -6162,48 +6213,51 @@ struct ExamineCellsStruct
 				return 1; //abort.
 			}
 
-			UnsignedInt newCostSoFar = from->getCostSoFar() + 0.5f*COST_ORTHOGONAL;
 			if (to->getType() == PathfindCell::CELL_CLIFF ) {
 				return 1;
 			}
+		}
 
-			ICoord2D newCellCoord;
-			newCellCoord.x = to_x;
-			newCellCoord.y = to_y;
+		UnsignedInt newCostSoFar = from->getCostSoFar() + 0.5f*COST_ORTHOGONAL;
 
-			if (!to->allocateInfo(newCellCoord)) {
-				// Out of cells for pathing...
- 				return 1;
-			}
-			to->setBlockedByAlly(false);
-			Int costRemaining = 0;
-			costRemaining = to->costToGoal( d->goalCell );
+		ICoord2D newCellCoord;
+		newCellCoord.x = to_x;
+		newCellCoord.y = to_y;
 
-			// check if this neighbor cell is already on the open (waiting to be tried)
-			// or closed (already tried) lists
-			if ( to->hasInfo() && (to->getOpen() || to->getClosed()) )
-			{
-				// already on one of the lists - if existing costSoFar is less,
-				// the new cell is on a longer path, so skip it
-				if (to->getCostSoFar() <= newCostSoFar)
-					return 0; // keep going.
-			}
+		if (!to->allocateInfo(newCellCoord)) {
+			// Out of cells for pathing...
+			return 1;
+		}
+		to->setPassedLineChecks(d->thePathfinder->m_lineCheckStamp);
+		to->setBlockedByAlly(false);
+		Int costRemaining = 0;
+		costRemaining = to->costToGoal( d->goalCell );
 
-			to->setCostSoFar(newCostSoFar);
-			// keep track of path we're building - point back to cell we moved here from
-			to->setParentCell(from) ;
-			to->setTotalCost(to->getCostSoFar() + costRemaining) ;
+		// check if this neighbor cell is already on the open (waiting to be tried)
+		// or closed (already tried) lists
+		if ( to->hasInfo() && (to->getOpen() || to->getClosed()) )
+		{
+			// already on one of the lists - if existing costSoFar is less,
+			// the new cell is on a longer path, so skip it
+			if (to->getCostSoFar() <= newCostSoFar)
+				return 0; // keep going.
+		}
 
-			// if to was on closed list, remove it from the list
-			if (to->getClosed())
-				to->removeFromClosedList( d->thePathfinder->m_closedList );
+		to->setCostSoFar(newCostSoFar);
+		// keep track of path we're building - point back to cell we moved here from
+		to->setParentCell(from) ;
+		to->setTotalCost(to->getCostSoFar() + costRemaining) ;
 
-			// if the to was already on the open list, remove it so it can be re-inserted in order
-			if (to->getOpen())
-				to->removeFromOpenList( d->thePathfinder->m_openList );
+		// if to was on closed list, remove it from the list
+		if (to->getClosed())
+			to->removeFromClosedList( d->thePathfinder->m_closedList );
 
-			// insert to in open list such that open list is sorted, smallest total path cost first
-			to->putOnSortedOpenList( d->thePathfinder->m_openList );
+		// if the to was already on the open list, remove it so it can be re-inserted in order
+		if (to->getOpen())
+			to->removeFromOpenList( d->thePathfinder->m_openList );
+
+		// insert to in open list such that open list is sorted, smallest total path cost first
+		to->putOnSortedOpenList( d->thePathfinder->m_openList );
 	}
 
 	return 0;	// keep going
@@ -6234,6 +6288,19 @@ Int Pathfinder::examineNeighboringCells(PathfindCell *parentCell, PathfindCell *
 			start.y = parentCell->getYIndex();
 			end.x = goalCell->getXIndex();
 			end.y = goalCell->getYIndex();
+
+			// GeneralsX @performance Claude 24/11/2026 What examineCellsCallback found out about cells
+			// holds for one search; one with other settings is another search.
+			if (obj != m_lineCheckObject || &locomotorSet != m_lineCheckLocomotorSet || radius != m_lineCheckRadius ||
+					centerInCell != m_lineCheckCenterInCell || isHuman != m_lineCheckIsHuman || m_ignoreObstacleID != m_lineCheckIgnoreID) {
+				nextLineCheckStamp();
+				m_lineCheckObject = obj;
+				m_lineCheckLocomotorSet = &locomotorSet;
+				m_lineCheckRadius = radius;
+				m_lineCheckCenterInCell = centerInCell;
+				m_lineCheckIsHuman = isHuman;
+				m_lineCheckIgnoreID = m_ignoreObstacleID;
+			}
 			iterateCellsAlongLine(start, end, parentCell->getLayer(), examineCellsCallback, &info);
 		}
 
@@ -6262,7 +6329,10 @@ Int Pathfinder::examineNeighboringCells(PathfindCell *parentCell, PathfindCell *
 		Coord3D fromPos;
 		fromPos.x = parentCell->getXIndex() * PATHFIND_CELL_SIZE_F ;
 		fromPos.y = parentCell->getYIndex() * PATHFIND_CELL_SIZE_F ;
-		fromPos.z = TheTerrainLogic->getGroundHeight(fromPos.x , fromPos.y);
+		// GeneralsX @performance Claude 24/11/2026 The height is only asked for by the checks of downhill
+		// locomotors and cliffs below, so it is looked up when one of them needs it, not for every cell.
+		// The terrain's height has no side effects; looked up later it is the same.
+		Bool fromHeightKnown = false;
 
 		for( int i=0; i<numNeighbors; i++ )
 		{
@@ -6307,6 +6377,10 @@ Int Pathfinder::examineNeighboringCells(PathfindCell *parentCell, PathfindCell *
 				toPos.y = newCellCoord.y * PATHFIND_CELL_SIZE_F ;
 				toPos.z = TheTerrainLogic->getGroundHeight(toPos.x , toPos.y);
 
+				if (!fromHeightKnown) {
+					fromPos.z = TheTerrainLogic->getGroundHeight(fromPos.x , fromPos.y);
+					fromHeightKnown = true;
+				}
 				if ( fromPos.z < toPos.z )
 					continue;
 			}
@@ -6372,6 +6446,10 @@ Int Pathfinder::examineNeighboringCells(PathfindCell *parentCell, PathfindCell *
 				toPos.y = newCellCoord.y * PATHFIND_CELL_SIZE_F ;
 				toPos.z = TheTerrainLogic->getGroundHeight(toPos.x , toPos.y);
 
+				if (!fromHeightKnown) {
+					fromPos.z = TheTerrainLogic->getGroundHeight(fromPos.x , fromPos.y);
+					fromHeightKnown = true;
+				}
 				if ( fabs(fromPos.z - toPos.z)<PATHFIND_CELL_SIZE_F) {
 					newCostSoFar += 7*COST_DIAGONAL;
 				}

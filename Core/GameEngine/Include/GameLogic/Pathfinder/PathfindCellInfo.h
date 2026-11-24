@@ -33,6 +33,9 @@ public:
 	static PathfindCellInfo * getACellInfo(PathfindCell *cell, const ICoord2D &pos);
 	static void releaseACellInfo(PathfindCellInfo *theInfo);
 
+	/// GeneralsX @performance Claude 24/11/2026 Forget every pass of the line checks, for when the stamps wrap around.
+	static void clearLineCheckStamps();
+
 protected:
 	static PathfindCellInfo *s_infoArray;
 	static PathfindCellInfo *s_firstFree;							///<
@@ -53,6 +56,10 @@ protected:
 	ObjectID m_goalAircraftID; ///< The objectID of the aircraft whose goal this is.
 
 	ObjectID m_obstacleID;	///< the object ID who overlaps this cell
+
+	/// GeneralsX @performance Claude 24/11/2026 The search in which this cell passed the checks of the
+	/// straight line toward the goal (Pathfinder::examineCellsCallback); 0 for none.
+	UnsignedInt m_lineCheckStamp;
 
 	UnsignedInt m_isFree:1;
 	UnsignedInt m_blockedByAlly:1;///< True if this cell is blocked by an allied unit.

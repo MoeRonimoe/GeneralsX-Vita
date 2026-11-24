@@ -134,6 +134,11 @@ public:
 
 	inline UnsignedInt getTotalCostDifference(PathfindCell& other) const;
 
+	// GeneralsX @performance Claude 24/11/2026 Whether the cell passed the checks of the line toward the
+	// goal in the search with this stamp (Pathfinder::examineCellsCallback).
+	inline Bool passedLineChecks(UnsignedInt stamp) const { return m_info != nullptr && m_info->m_lineCheckStamp == stamp; }
+	inline void setPassedLineChecks(UnsignedInt stamp) { m_info->m_lineCheckStamp = stamp; }
+
 	inline void setCostSoFar(UnsignedInt cost) { if( m_info ) m_info->m_costSoFar = cost;}
 	inline void setTotalCost(UnsignedInt cost) { if( m_info ) m_info->m_totalCost = cost;}
 
