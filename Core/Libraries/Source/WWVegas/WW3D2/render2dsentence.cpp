@@ -1778,6 +1778,56 @@ FontCharsClass::Free_GDI_Font ()
 
 ////////////////////////////////////////////////////////////////////////////////////
 //
+//	Unlocated fonts
+//
+// GeneralsX @performance Claude 24/11/2026 Remember the fonts that could not be located.
+// Which font files exist does not change while the game runs, but every search probes
+// each font directory with each candidate name and extension, and with fontconfig loads
+// its whole configuration. Zero Hour asks for "Arial Unicode MS" whenever it creates a
+// drawable (ResolveDrawableCaptionFont in Drawable.cpp), and every new font asks for it
+// as its Unicode fallback. Where it is missing, as on the PS Vita, a battle searched for
+// it dozens of times per second, each time with up to 54 file probes on the memory card.
+////////////////////////////////////////////////////////////////////////////////////
+namespace
+{
+
+struct UnlocatedFont
+{
+	char	Name[128];
+	bool	Bold;
+};
+
+const int MAX_UNLOCATED_FONTS = 32;
+UnlocatedFont _UnlocatedFonts[MAX_UNLOCATED_FONTS];
+int _UnlocatedFontCount = 0;
+
+bool
+Is_Unlocated_Font (const char *normalized_name, bool bold)
+{
+	for ( int i = 0; i < _UnlocatedFontCount; i++ ) {
+		if ( _UnlocatedFonts[i].Bold == bold && strcmp( _UnlocatedFonts[i].Name, normalized_name ) == 0 ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void
+Remember_Unlocated_Font (const char *normalized_name, bool bold)
+{
+	if ( _UnlocatedFontCount >= MAX_UNLOCATED_FONTS || strlen( normalized_name ) >= sizeof(_UnlocatedFonts[0].Name) ) {
+		return;
+	}
+	UnlocatedFont &font = _UnlocatedFonts[_UnlocatedFontCount++];
+	strcpy( font.Name, normalized_name );
+	font.Bold = bold;
+}
+
+} // namespace
+
+
+////////////////////////////////////////////////////////////////////////////////////
+//
 //	Locate_Font_FontConfig
 //
 // GeneralsX @feature felipebraz 26/09/2026 Universal multi-tiered font resolution:
@@ -1815,6 +1865,10 @@ FontCharsClass::Locate_Font_FontConfig (const char *font_name)
 	// Prepare candidate names based on requested font and bold status
 	//
 	bool is_bold = this->IsBold || (strstr( font_name, "Bold" ) != nullptr) || (strstr( font_name, "bold" ) != nullptr);
+
+	if ( Is_Unlocated_Font( normalized, is_bold ) ) {
+		return nullptr;
+	}
 
 	const char *candidates[12];
 	int candidate_count = 0;
@@ -1988,7 +2042,8 @@ FontCharsClass::Locate_Font_FontConfig (const char *font_name)
 		}
 	}
 
-	fprintf( stderr, "[Font] WARNING: Unable to resolve font '%s' (all tiers exhausted)\n", font_name );
+	Remember_Unlocated_Font( normalized, is_bold );
+	fprintf( stderr, "[Font] WARNING: Unable to resolve font '%s'%s (all tiers exhausted); it is not searched for again\n", font_name, is_bold ? " bold" : "" );
 	fflush( stderr );
 	return nullptr;
 }
@@ -2073,14 +2128,6 @@ bool
 FontCharsClass::Create_Freetype_Font (const char *font_name)
 {
 	//
-	//	Initialize FreeType library
-	//
-	FT_Error error = FT_Init_FreeType( &FTLibrary );
-	if ( error != 0 ) {
-		return false;
-	}
-
-	//
 	//	Handle "Generals" font mapping to Arial
 	//
 	bool doingGenerals = false;
@@ -2097,11 +2144,19 @@ FontCharsClass::Create_Freetype_Font (const char *font_name)
 
 	//
 	//	Locate the font file using Fontconfig
+	// GeneralsX @performance Claude 24/11/2026 Locate the file before FreeType is set up,
+	// so a font that does not exist costs no library set up and tear down.
 	//
 	const char *font_path = Locate_Font_FontConfig( font_name );
 	if ( font_path == nullptr ) {
-		FT_Done_FreeType( FTLibrary );
-		FTLibrary = nullptr;
+		return false;
+	}
+
+	//
+	//	Initialize FreeType library
+	//
+	FT_Error error = FT_Init_FreeType( &FTLibrary );
+	if ( error != 0 ) {
 		return false;
 	}
 
