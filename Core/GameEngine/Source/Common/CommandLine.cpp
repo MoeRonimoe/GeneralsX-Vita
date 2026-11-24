@@ -447,6 +447,13 @@ Int parseReplay(char *args[], int num)
 	return 1;
 }
 
+// GeneralsX @feature Claude 24/11/2026 See GlobalData::m_traceReplayCRCs.
+Int parseReplayCRCTrace(char *args[], int num)
+{
+	TheWritableGlobalData->m_traceReplayCRCs = TRUE;
+	return 1;
+}
+
 Int parseJobs(char *args[], int num)
 {
 	if (num > 1)
@@ -1200,6 +1207,11 @@ static CommandLineParam paramsForStartup[] =
 	// You can pass this multiple times to play back multiple replays.
 	// You can also include wildcards. The file must be in the replay folder or in a subfolder.
 	{ "-replay", parseReplay },
+
+	// GeneralsX @feature Claude 24/11/2026
+	// With -replay: log every CRC check, and play on after a mismatch instead of stopping.
+	// Two builds that play the same replay this way can be compared check by check.
+	{ "-replayCRCTrace", parseReplayCRCTrace },
 
 	// TheSuperHackers @feature helmutbuhler 23/05/2025
 	// Simulate each replay in a separate process and use 1..N processes at the same time.

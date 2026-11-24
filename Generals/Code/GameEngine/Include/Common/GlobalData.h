@@ -366,6 +366,7 @@ public:
 
 	std::vector<AsciiString> m_simulateReplays; ///< If not empty, simulate this list of replays and exit.
 	Int m_simulateReplayJobs; ///< Maximum number of processes to use for simulation, or SIMULATE_REPLAYS_SEQUENTIAL for sequential simulation
+	Bool m_traceReplayCRCs; ///< GeneralsX @feature Claude 24/11/2026 Log every CRC check of a replay and play on after a mismatch (-replayCRCTrace)
 
 	Int m_maxParticleCount;						///< maximum number of particles that can exist
 	Int m_maxFieldParticleCount;			///< maximum number of field-type particles that can exist (roughly)
