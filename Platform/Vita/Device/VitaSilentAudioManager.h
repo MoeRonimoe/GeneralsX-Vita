@@ -87,4 +87,11 @@ public:
 	virtual void closeAnySamplesUsingFile(const void *fileToClose) override {}
 
 	virtual void setDeviceListenerPosition() override {}
+
+	// GeneralsX @bugfix Claude 25/11/2026 A request to play or stop a sound is let go of at once,
+	// with the event it holds: there is no device to work through the list, and a headless run never
+	// calls update(). Kept, the requests and their events held 55 MB of the memory pools at the 13000th
+	// step of a replay of a skirmish against seven computer players. The event was made and its random
+	// values drawn before it got here (AudioManager::addAudioEvent()), so the game stays the same.
+	virtual void appendAudioRequest(AudioRequest *request) override { releaseAudioRequest(request); }
 };
