@@ -774,6 +774,21 @@ void GameClient::updateHeadless()
 	// during GameLogic and only cleaned up during rendering. update() lets particles finish
 	// their lifecycle naturally instead of abruptly removing them with reset().
 	TheParticleSystemManager->update();
+
+	// GeneralsX @bugfix Claude 25/11/2026 Destroy the drawables whose time is up, as
+	// Drawable::updateDrawable() does in update(), which headless mode does not call. They have
+	// no object (tracers, which many shots show, and the ropes of Chinooks), so the logic does not
+	// destroy them either: without this they piled up for as long as a replay was being checked.
+	const UnsignedInt now = TheGameLogic->getFrame();
+	Drawable* draw = firstDrawable();
+	while (draw)
+	{
+		Drawable* next = draw->getNextDrawable();
+		const UnsignedInt expirationDate = draw->getExpirationDate();
+		if (expirationDate != 0 && now >= expirationDate)
+			destroyDrawable(draw);
+		draw = next;
+	}
 }
 
 Bool GameClient::skipCurrentIntroStage()
