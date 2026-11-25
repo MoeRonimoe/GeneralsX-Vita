@@ -554,6 +554,11 @@ public:
 
 	void memoryPoolUsageReport( const char* filename, FILE *appendToFileInstead = nullptr );
 
+	/// GeneralsX @feature Claude 25/11/2026 Write what the pools hold to fp: the totals and the
+	/// poolCount pools that hold the most. Unlike memoryPoolUsageReport() it works in every build.
+	/// Returns the bytes the pools hold.
+	double logPoolUsage(FILE *fp, Int poolCount);
+
 	#ifdef MEMORYPOOL_DEBUG
 
 		/// perform internal consistency checking

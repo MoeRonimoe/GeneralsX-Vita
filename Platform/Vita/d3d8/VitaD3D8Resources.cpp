@@ -38,7 +38,7 @@ namespace VitaD3D8
 namespace
 {
 
-ResourceMemory s_resourceMemory = { 0, 0 };
+ResourceMemory s_resourceMemory = { 0, 0, 0 };
 
 /// Counts a buffer upload and the time it takes for the frame statistics.
 class BufferUploadTimer
@@ -949,6 +949,8 @@ BufferStorage::~BufferStorage()
 		glDeleteBuffers(1, &m_glBuffer);
 
 	s_resourceMemory.bufferBytes -= m_length * m_blockCount;
+	if (m_blockCount > 0 && !m_clientSide && m_target == GL_ARRAY_BUFFER)
+		s_resourceMemory.staticVertexBufferBytes -= m_length;
 
 	// What was written to the stream may still point into a block.
 	for (UINT i = 0; i < m_blockCount; ++i)
@@ -973,6 +975,8 @@ bool BufferStorage::Init(UINT length, DWORD usage)
 		return false;
 
 	s_resourceMemory.bufferBytes += length;
+	if (!m_clientSide && m_target == GL_ARRAY_BUFFER)
+		s_resourceMemory.staticVertexBufferBytes += length;
 	m_blocks[0].memory = m_systemCopy;
 	m_blocks[0].usedInFrame = 0;
 	m_blocks[0].used = false;

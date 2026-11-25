@@ -225,11 +225,14 @@ int keepAwakeThread(SceSize, void *)
 		sceKernelPowerTick(SCE_KERNEL_POWER_TICK_DEFAULT);
 		sceKernelDelayThread(5 * 1000 * 1000);
 
-		// Read without a lock: a frame number that is one step old does not matter here.
+		// Read without a lock: a frame number that is one step old does not matter here. The
+		// heap's statistics take the allocator's lock.
 		if (tick % 6 == 0 && TheGameLogic != nullptr)
 		{
-			fprintf(stderr, "[main] headless: logic frame %u after %.0f s\n", static_cast<unsigned int>(TheGameLogic->getFrame()),
-				(sceKernelGetProcessTimeWide() - start) / 1000000.0);
+			const VitaDiagnostics::MemoryState state = VitaDiagnostics::getMemoryState();
+			fprintf(stderr, "[main] headless: logic frame %u after %.0f s, heap %.1f MB in use, grown to %.1f MB\n",
+				static_cast<unsigned int>(TheGameLogic->getFrame()), (sceKernelGetProcessTimeWide() - start) / 1000000.0,
+				state.heapUsed / (1024.0 * 1024.0), state.heapGrown / (1024.0 * 1024.0));
 		}
 	}
 	return 0;

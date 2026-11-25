@@ -45,6 +45,11 @@ MemoryState getMemoryState();
 /// Write the state of the C heap and of the application's memory budget to the log.
 void logMemory(const char *label);
 
+/// Write to the log how much of the C heap is in use at this step of the logic and how it
+/// divides: pooledBytes in the engine's memory pools (MemoryPoolFactory::logPoolUsage()), the
+/// rest outside them, and of that the decoded sound effects.
+void logHeapBesidePools(unsigned int logicFrame, double pooledBytes);
+
 /// An allocation of this many bytes failed: the log says so, with how much of the heap was in
 /// use and free and the largest block still to be had at its top, which tells a full heap from
 /// one that is broken up.

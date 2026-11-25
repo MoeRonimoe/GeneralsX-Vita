@@ -3001,6 +3001,59 @@ void MemoryPoolFactory::debugResetCheckpoints()
 #endif
 
 //-----------------------------------------------------------------------------
+// GeneralsX @feature Claude 25/11/2026 See the header. The bytes are those of the blocks the
+// pools have taken from the system, used or not, without the few bytes of bookkeeping per block.
+double MemoryPoolFactory::logPoolUsage(FILE *fp, Int poolCount)
+{
+	enum { MAX_LISTED = 32 };
+	if (poolCount > MAX_LISTED)
+		poolCount = MAX_LISTED;
+
+	MemoryPool *largest[MAX_LISTED];
+	Int listed = 0;
+	Int pools = 0;
+	double heldBytes = 0.0;
+	double usedBytes = 0.0;
+	double neverUsedBytes = 0.0;
+
+	for (MemoryPool *pool = m_firstPoolInFactory; pool; pool = pool->getNextPoolInList())
+	{
+		++pools;
+		const double size = pool->getAllocationSize();
+		const double held = size * pool->getTotalBlockCount();
+		heldBytes += held;
+		usedBytes += size * pool->getUsedBlockCount();
+		neverUsedBytes += size * (pool->getTotalBlockCount() - pool->getPeakBlockCount());
+
+		// Insertion into the list of the largest, which is short.
+		Int at = listed;
+		while (at > 0 && (double)largest[at - 1]->getAllocationSize() * largest[at - 1]->getTotalBlockCount() < held)
+			--at;
+		if (at >= poolCount)
+			continue;
+		if (listed < poolCount)
+			++listed;
+		for (Int i = listed - 1; i > at; --i)
+			largest[i] = largest[i - 1];
+		largest[at] = pool;
+	}
+
+	const double MEGABYTE = 1024.0 * 1024.0;
+	fprintf(fp, "[mem] %d pools hold %.1f MB, %.1f MB of it in use, %.1f MB never used; the largest:\n", pools, heldBytes / MEGABYTE,
+		usedBytes / MEGABYTE, neverUsedBytes / MEGABYTE);
+	for (Int i = 0; i < listed; ++i)
+	{
+		MemoryPool *pool = largest[i];
+		fprintf(fp, "[mem]   %s: %d blocks of %d bytes, %.2f MB; %d in use, at most %d, %d at the start\n",
+			pool->getPoolName(), pool->getTotalBlockCount(), pool->getAllocationSize(),
+			(double)pool->getAllocationSize() * pool->getTotalBlockCount() / MEGABYTE,
+			pool->getUsedBlockCount(), pool->getPeakBlockCount(), pool->getInitialBlockCount());
+	}
+	fflush(fp);
+	return heldBytes;
+}
+
+//-----------------------------------------------------------------------------
 void MemoryPoolFactory::memoryPoolUsageReport( const char* filename, FILE *appendToFileInstead )
 {
 #ifdef MEMORYPOOL_DEBUG

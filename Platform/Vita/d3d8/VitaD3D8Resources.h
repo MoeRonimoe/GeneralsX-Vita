@@ -70,6 +70,7 @@ struct ResourceMemory
 {
 	size_t textureBytes;
 	size_t bufferBytes;
+	size_t staticVertexBufferBytes;	///< of bufferBytes: the first copy of the static vertex buffers
 };
 ResourceMemory GetResourceMemory();
 

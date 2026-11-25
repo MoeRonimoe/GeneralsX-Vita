@@ -313,6 +313,16 @@ void logMemory(const char *label)
 }
 
 //-----------------------------------------------------------------------------
+void logHeapBesidePools(unsigned int logicFrame, double pooledBytes)
+{
+	const MemoryState state = getMemoryState();
+	fprintf(stderr, "[mem] heap %.1f MB in use at logic frame %u: %.1f MB in the pools, %.1f MB outside them, of that %.1f MB decoded sound effects\n",
+		state.heapUsed / MEGABYTE, logicFrame, pooledBytes / MEGABYTE, (state.heapUsed - pooledBytes) / MEGABYTE,
+		g_soundEffectBytes / MEGABYTE);
+	fflush(stderr);
+}
+
+//-----------------------------------------------------------------------------
 void install()
 {
 	std::set_terminate(onTerminate);

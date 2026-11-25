@@ -271,6 +271,38 @@ static void notePace(UnsignedInt frameBefore)
 }
 
 //-----------------------------------------------------------------------------
+/// Every minute of a mission: what the engine's memory pools hold, and how much of the heap is
+/// outside them (large blocks of the engine, the copies of the Direct3D layer, the decoded sound
+/// effects, the libraries). The heap is what limits the large games on the console.
+static void noteMemory()
+{
+	const uint64_t PERIOD_US = 60 * 1000 * 1000;
+	const size_t POOLS_LISTED = 16;
+
+	static uint64_t lastReport = 0;
+
+	const Bool inMission = TheGameLogic != nullptr && TheGameLogic->isInGame() && !TheGameLogic->isInShellGame();
+	const uint64_t now = VitaDiagnostics::now();
+	if (!inMission || TheMemoryPoolFactory == nullptr)
+	{
+		lastReport = 0;
+		return;
+	}
+	if (lastReport == 0)
+	{
+		// The first report comes a minute into the mission, after its loading.
+		lastReport = now;
+		return;
+	}
+	if (now - lastReport < PERIOD_US)
+		return;
+	lastReport = now;
+
+	const double pooled = TheMemoryPoolFactory->logPoolUsage(stderr, POOLS_LISTED);
+	VitaDiagnostics::logHeapBesidePools(TheGameLogic->getFrame(), pooled);
+}
+
+//-----------------------------------------------------------------------------
 void VitaGameEngine::update()
 {
 	serviceWindowsOS();
@@ -347,6 +379,7 @@ void VitaGameEngine::update()
 	const uint64_t work = VitaDiagnostics::now() - start;
 	noteFrameForBenchmark(frameBefore, work, alternating, withoutMask);
 	notePace(frameBefore);
+	noteMemory();
 
 	// How long frames with and without a picture take decides how many pictures may be left
 	// out (VitaPacing.h). Only frames in which the logic took a step are frames of a game

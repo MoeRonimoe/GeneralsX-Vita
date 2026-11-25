@@ -27,6 +27,10 @@
 #include "GameLogic/GameLogic.h"
 #include "GameClient/GameClient.h"
 
+#if defined(__vita__)
+#include <VitaDiagnostics.h>
+#endif
+
 // GeneralsX @build BenderAI 12/02/2026 Cross-platform executable path retrieval
 #ifndef _WIN32
 #ifdef __linux__
@@ -55,6 +59,25 @@ int countProcessesRunning(const std::vector<WorkerProcess>& processes)
 	}
 	return numProcessesRunning;
 }
+
+#if defined(__vita__)
+// GeneralsX @feature Claude 25/11/2026 On the PS Vita a replay checked without drawing it writes
+// what the memory pools and the heap hold every 1000 steps of the logic, as a played mission does
+// every minute (VitaGameEngine.cpp). A replay is the same game on every run, at the same steps,
+// so two runs tell what a change does to the memory.
+void noteHeadlessMemory()
+{
+	const UnsignedInt REPORT_INTERVAL_FRAMES = 1000;
+	const Int POOLS_LISTED = 16;
+
+	const UnsignedInt frame = TheGameLogic->getFrame();
+	if (frame == 0 || frame % REPORT_INTERVAL_FRAMES != 0 || TheMemoryPoolFactory == nullptr)
+		return;
+
+	const double pooled = TheMemoryPoolFactory->logPoolUsage(stderr, POOLS_LISTED);
+	VitaDiagnostics::logHeapBesidePools(frame, pooled);
+}
+#endif
 } // namespace
 
 int ReplaySimulation::simulateReplaysInThisProcess(const std::vector<AsciiString> &filenames)
@@ -109,6 +132,9 @@ int ReplaySimulation::simulateReplaysInThisProcess(const std::vector<AsciiString
 					fflush(stdout);
 				}
 				TheGameLogic->UPDATE();
+#if defined(__vita__)
+				noteHeadlessMemory();
+#endif
 				if (TheRecorder->sawCRCMismatch())
 				{
 					numErrors++;
