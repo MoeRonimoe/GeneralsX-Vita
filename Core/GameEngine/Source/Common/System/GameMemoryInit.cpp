@@ -70,11 +70,33 @@ void userMemoryManagerGetDmaParms(Int *numSubPools, const PoolInitRec **pParms)
 	*pParms = DefaultDMA;
 }
 
+#if defined(__vita__)
+//-----------------------------------------------------------------------------
+// GeneralsX @performance Claude 25/11/2026 On the PS Vita a pool starts with the blocks it adds when
+// it runs out (its overflow count) instead of its initial count, which was chosen for a PC. A pool
+// never gives a block back, so whatever a start holds beyond what the pool comes to use is memory
+// nobody gets: in a Zero Hour skirmish against seven computer players 22 of the 104 MB the pools
+// held were never used (dmaPool_128 alone started with 80000 blocks and used at most 33000).
+// Growing in overflow steps, a pool holds what it uses, rounded up to one step. The heap of the
+// console is what limits the large games. Checked against the PC start sizes on a replay of that
+// skirmish without drawing it, the heap peaked 16 MB lower and the logic ran as fast.
+static void startPoolAtOverflowCount(Int& initialAllocationCount, Int overflowAllocationCount)
+{
+	if (overflowAllocationCount > 0 && initialAllocationCount > overflowAllocationCount)
+		initialAllocationCount = overflowAllocationCount;
+}
+#endif
+
 //-----------------------------------------------------------------------------
 void userMemoryAdjustPoolSize(const char *poolName, Int& initialAllocationCount, Int& overflowAllocationCount)
 {
 	if (initialAllocationCount > 0)
+	{
+#if defined(__vita__)
+		startPoolAtOverflowCount(initialAllocationCount, overflowAllocationCount);
+#endif
 		return;
+	}
 
 	for (const PoolSizeRec* p = PoolSizes; p->name != nullptr; ++p)
 	{
@@ -82,6 +104,9 @@ void userMemoryAdjustPoolSize(const char *poolName, Int& initialAllocationCount,
 		{
 			initialAllocationCount = p->initial;
 			overflowAllocationCount = p->overflow;
+#if defined(__vita__)
+			startPoolAtOverflowCount(initialAllocationCount, overflowAllocationCount);
+#endif
 			return;
 		}
 	}
