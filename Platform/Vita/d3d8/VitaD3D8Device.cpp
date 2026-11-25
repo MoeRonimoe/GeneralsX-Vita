@@ -262,9 +262,10 @@ void LogFrameStatistics()
 }
 
 // Memory vitaGL leaves to the rest of the process when it claims the remaining user RAM
-// for its own pools: thread stacks, the network stack and anything allocated behind
-// newlib's back.
-const int VITAGL_RAM_RESERVE = 16 * 1024 * 1024;
+// for its own pools: thread stacks, the network stack, system modules such as the on-screen
+// keyboard and anything allocated behind newlib's back. Of the 16 MB this was, no run used
+// more than one, so it is 6 MB now and the heap is larger by the rest (cmake/vita.cmake).
+const int VITAGL_RAM_RESERVE = 6 * 1024 * 1024;
 
 // vitaGL's pool for glBegin/glEnd style drawing, which this implementation never uses.
 const int VITAGL_LEGACY_POOL = 64 * 1024;

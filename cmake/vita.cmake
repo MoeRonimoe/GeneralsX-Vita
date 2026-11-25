@@ -24,11 +24,14 @@ set(VITA_APP_VERSION "01.00" CACHE STRING "Version stored in param.sfo (NN.NN)")
 # what is left of the application budget for its own texture and vertex pools.
 #
 # Of the 365 MiB of main memory an application with the extended budget gets, about 20 go
-# to the executable and the thread stacks and 16 are left unclaimed (VITAGL_RAM_RESERVE).
+# to the executable and the thread stacks and 6 are left unclaimed (VITAGL_RAM_RESERVE).
 # The heap gets most of the rest: vitaGL has the GPU's own memory besides, and it falls
 # back to the heap when its pools are full, while the engine cannot use vitaGL's pools.
-# With 220 MiB the heap was already 172 MiB deep when a mission started to load.
-set(VITA_NEWLIB_HEAP_MB "300" CACHE STRING "Size of the newlib heap in MiB")
+# With 220 MiB the heap was already 172 MiB deep when a mission started to load. 16 MiB
+# were left unclaimed until 2026-11-25, and no run of either game used more than one of
+# them (the `unclaimed: main` of the `[mem]` lines), so 10 of them went to the heap: a
+# skirmish against seven computer players takes the heap's top to 271 MiB.
+set(VITA_NEWLIB_HEAP_MB "310" CACHE STRING "Size of the newlib heap in MiB")
 # The engine has timers in its major functions (USE_PERF_TIMER). With this option their
 # share of an average frame is written to the log every few seconds. Changing it rebuilds
 # everything.
