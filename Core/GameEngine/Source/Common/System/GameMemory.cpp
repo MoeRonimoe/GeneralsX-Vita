@@ -493,6 +493,11 @@ private:
 	Int											m_usedBlocksInBlob;		///< total allocated blocks in this blob
 	Int											m_totalBlocksInBlob;	///< total blocks in this blob (allocated + available)
 	char										*m_blockData;					///< ptr to the blocks (really a MemoryPoolSingleBlock*)
+	// GeneralsX @performance Claude 25/11/2026 The pool's list of the blobs that have free blocks, so
+	// that an allocation finds one without walking all of the pool's blobs.
+	MemoryPoolBlob					*m_nextBlobWithFreeBlocks;	///< next blob of the pool with free blocks
+	MemoryPoolBlob					*m_prevBlobWithFreeBlocks;	///< previous blob of the pool with free blocks
+	Bool										m_inFreeBlobList;					///< whether the blob is in that list
 
 public:
 
@@ -503,6 +508,9 @@ public:
 
 	void addBlobToList(MemoryPoolBlob **ppHead, MemoryPoolBlob **ppTail);
 	void removeBlobFromList(MemoryPoolBlob **ppHead, MemoryPoolBlob **ppTail);
+	void addToFreeBlobList(MemoryPoolBlob **ppHead);
+	void removeFromFreeBlobList(MemoryPoolBlob **ppHead);
+	Bool isInFreeBlobList() const { return m_inFreeBlobList; }
 	MemoryPoolBlob *getNextInList();
 	Bool hasAnyFreeBlocks();
 
@@ -1195,7 +1203,10 @@ MemoryPoolBlob::MemoryPoolBlob() :
 	m_firstFreeBlock(nullptr),
 	m_usedBlocksInBlob(0),
 	m_totalBlocksInBlob(0),
-	m_blockData(nullptr)
+	m_blockData(nullptr),
+	m_nextBlobWithFreeBlocks(nullptr),
+	m_prevBlobWithFreeBlocks(nullptr),
+	m_inFreeBlobList(false)
 {
 }
 
@@ -1281,6 +1292,45 @@ void MemoryPoolBlob::removeBlobFromList(MemoryPoolBlob **ppHead, MemoryPoolBlob 
 		*ppTail = this->m_prevBlob;
 	else
 		this->m_nextBlob->m_prevBlob = this->m_prevBlob;
+}
+
+//-----------------------------------------------------------------------------
+/**
+	GeneralsX @performance Claude 25/11/2026 put this blob at the head of its pool's list of
+	blobs with free blocks, which is where the next allocation takes a block from.
+*/
+void MemoryPoolBlob::addToFreeBlobList(MemoryPoolBlob **ppHead)
+{
+	DEBUG_ASSERTCRASH(!m_inFreeBlobList, ("blob is in the list of blobs with free blocks already"));
+
+	m_prevBlobWithFreeBlocks = nullptr;
+	m_nextBlobWithFreeBlocks = *ppHead;
+	if (*ppHead != nullptr)
+		(*ppHead)->m_prevBlobWithFreeBlocks = this;
+	*ppHead = this;
+	m_inFreeBlobList = true;
+}
+
+//-----------------------------------------------------------------------------
+/**
+	GeneralsX @performance Claude 25/11/2026 take this blob out of its pool's list of blobs with
+	free blocks.
+*/
+void MemoryPoolBlob::removeFromFreeBlobList(MemoryPoolBlob **ppHead)
+{
+	DEBUG_ASSERTCRASH(m_inFreeBlobList, ("blob is not in the list of blobs with free blocks"));
+
+	if (m_prevBlobWithFreeBlocks != nullptr)
+		m_prevBlobWithFreeBlocks->m_nextBlobWithFreeBlocks = m_nextBlobWithFreeBlocks;
+	else
+		*ppHead = m_nextBlobWithFreeBlocks;
+
+	if (m_nextBlobWithFreeBlocks != nullptr)
+		m_nextBlobWithFreeBlocks->m_prevBlobWithFreeBlocks = m_prevBlobWithFreeBlocks;
+
+	m_nextBlobWithFreeBlocks = nullptr;
+	m_prevBlobWithFreeBlocks = nullptr;
+	m_inFreeBlobList = false;
 }
 
 //-----------------------------------------------------------------------------
@@ -1601,8 +1651,9 @@ MemoryPoolBlob* MemoryPool::createBlob(Int allocationCount)
 
 	blob->addBlobToList(&m_firstBlob, &m_lastBlob);
 
-	DEBUG_ASSERTCRASH(m_firstBlobWithFreeBlocks == nullptr, ("DO NOT IGNORE. Please call John McD - x36872 (m_firstBlobWithFreeBlocks != nullptr)"));
-	m_firstBlobWithFreeBlocks = blob;
+	// GeneralsX @performance Claude 25/11/2026 m_firstBlobWithFreeBlocks heads the list of all
+	// blobs with free blocks (MemoryPoolBlob::addToFreeBlobList()).
+	blob->addToFreeBlobList(&m_firstBlobWithFreeBlocks);
 
 	// bookkeeping
 	m_totalBlocksInPool += allocationCount;
@@ -1635,10 +1686,9 @@ Int MemoryPool::freeBlob(MemoryPoolBlob* blob)
 	// de-link it from our list
 	blob->removeBlobFromList(&m_firstBlob, &m_lastBlob);
 
-	// ensure that the 'first free' blob is still a valid blob.
-	// (doesn't need to actually have free blocks, just be a valid blob)
-	if (m_firstBlobWithFreeBlocks == blob)
-		m_firstBlobWithFreeBlocks = m_firstBlob;
+	// GeneralsX @performance Claude 25/11/2026 and from the list of blobs with free blocks.
+	if (blob->isInFreeBlobList())
+		blob->removeFromFreeBlobList(&m_firstBlobWithFreeBlocks);
 
 	// this is evil... since there is no 'placement delete' we must do this the hard way
 	// and call the dtor directly. ordinarily this is heinous, but in this case we'll
@@ -1667,23 +1717,13 @@ void* MemoryPool::allocateBlockDoNotZeroImplementation(DECLARE_LITERALSTRING_ARG
 {
 	ScopedCriticalSection scopedCriticalSection(TheMemoryPoolCriticalSection);
 
-	if (m_firstBlobWithFreeBlocks != nullptr && !m_firstBlobWithFreeBlocks->hasAnyFreeBlocks())
-	{
-		// hmm... the current 'free' blob has nothing available. look and see if there
-		// are any other existing blobs with freespace.
-		MemoryPoolBlob *blob = m_firstBlob;
-		for (; blob != nullptr; blob = blob->getNextInList())
-		{
-			if (blob->hasAnyFreeBlocks())
-			 	break;
-		}
+	// GeneralsX @performance Claude 25/11/2026 Every blob with free blocks is in the list that
+	// m_firstBlobWithFreeBlocks heads. When the blob this took blocks from was full, the next
+	// allocation walked all of the pool's blobs from the first to find one with a free block,
+	// over and over in a pool whose blobs are all nearly full, which is what the pools that
+	// grow in steps on the PS Vita (GameMemoryInit.cpp) are.
 
-		// note that if we walk thru the list without finding anything, this will
-		// reset m_firstBlobWithFreeBlocks to null and fall thru.
-	 	m_firstBlobWithFreeBlocks = blob;
-	}
-
-	// OK, if we are here then we have no blobs with freespace... darn.
+	// if we are here without a blob with freespace... darn.
 	// allocate an overflow block.
 	if (m_firstBlobWithFreeBlocks == nullptr)
 	{
@@ -1703,6 +1743,9 @@ void* MemoryPool::allocateBlockDoNotZeroImplementation(DECLARE_LITERALSTRING_ARG
 
 	MemoryPoolSingleBlock *block = blob->allocateSingleBlock(PASS_LITERALSTRING_ARG1);
 	DEBUG_ASSERTCRASH(block, ("should not fail here"));
+
+	if (!blob->hasAnyFreeBlocks())
+		blob->removeFromFreeBlobList(&m_firstBlobWithFreeBlocks);
 
 #ifdef MEMORYPOOL_CHECKPOINTING
 	BlockCheckpointInfo *bi = debugAddCheckpointInfo(block->debugGetLiteralTagString(), m_factory->getCurCheckpoint(), getAllocationSize());
@@ -1778,8 +1821,9 @@ void MemoryPool::freeBlock(void* pBlockPtr)
 	//	return;
 	//}
 
-	if (!m_firstBlobWithFreeBlocks)
-		m_firstBlobWithFreeBlocks = blob;
+	// GeneralsX @performance Claude 25/11/2026 A blob that was full has a free block again.
+	if (!blob->isInFreeBlobList())
+		blob->addToFreeBlobList(&m_firstBlobWithFreeBlocks);
 
 	// bookkeeping
 	--m_usedBlocksInPool;
