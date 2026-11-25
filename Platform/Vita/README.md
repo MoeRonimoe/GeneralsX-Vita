@@ -20,10 +20,11 @@ and to need fixes guided by the log file and core dumps.
 **Zero Hour builds and runs as well (preset `vita-zh`).** Its menus and movies work, and
 the first missions of two campaigns were played to their end on a console, the first USA
 mission with its opening film and its train ride. Memory is what limits it: that mission
-takes the top of the 300 MB heap to 287 MB (see the notes at the end). A skirmish against
-seven hard computer players runs, but at 3 to 10 frames per second once the armies have
-grown: the game logic alone takes about 200 ms per step then (5 steps per second), and the
-heap's top reached 271 MB. The frame time work of the base game (tree batch, skipped
+took the top of the heap, then 300 MB, to 287 MB; the heap is 310 MB now (see the notes at
+the end). A skirmish against seven hard computer players runs, but at 3 to 10 frames per
+second once the armies have grown: the game logic alone takes about 200 ms per step then
+(5 steps per second). Its heap's top reached 271 MB; with the memory pools started small,
+243 MB were in use at step 10000. The frame time work of the base game (tree batch, skipped
 drawables, sleepy update heap, relation arrays) has not been carried over.
 
 | Area | State |
@@ -110,7 +111,7 @@ Build options of interest (`cmake --preset vita -D<name>=<value>`):
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `VITA_NEWLIB_HEAP_MB` | 300 | Size of the C heap. vitaGL gets what is left of the 365 MiB of main memory (about 20 MiB are taken by the executable and the stacks), in addition to the GPU's own memory. |
+| `VITA_NEWLIB_HEAP_MB` | 310 | Size of the C heap. vitaGL gets what is left of the 365 MiB of main memory (about 20 MiB are taken by the executable and the stacks, and 6 MiB are left unclaimed), in addition to the GPU's own memory. |
 | `VITA_TITLE_ID` | GENR00001 | Title id of the package |
 | `VITA_FRAME_PROFILE` | OFF | Compiles in what the frame profile needs: the engine's own timed functions (`[time]` lines) and the list of every combination of fixed function settings the game draws with (`[d3d8] state` lines). Both stay silent until `VITA_PROFILE` is set at run time, see below. Rebuilds everything. |
 | `VITA_AUDIO` | OFF | Builds the game with sound, see "Sound". Fetches miniaudio 0.11.23. |
@@ -424,8 +425,9 @@ in `vita_args.txt` (the replay in `UserData/GeneralsX/GeneralsZH/Replays`) the g
 the replay without drawing it, as fast as it can, writes every check of the game's state
 as a `[crc] frame N computed X recorded Y` line, and plays on after a mismatch instead of
 stopping. The screen stays dark, the console is kept awake, every 30 seconds a
-`[main] headless: logic frame N after T s` line times the run, and at the end the game
-goes back to the LiveArea. Two runs of one replay, one with the change and one without
+`[main] headless: logic frame N after T s, heap ...` line times the run, every 1000 steps
+`[mem]` lines tell what the memory pools and the rest of the heap hold, and at the end the
+game goes back to the LiveArea. Two runs of one replay, one with the change and one without
 (`+VITA_PATHFIND_LINE_CACHE=0` is such a switch), must give the same `computed` values at
 every check, and the frame lines compare their speed. Replays recorded on the console do
 not match their recording to the end, see the notes at the end; that does not spoil the
@@ -487,9 +489,10 @@ a C++ exception; it then leaves `UserData/GeneralsX/Generals/ReleaseCrashInfo.tx
 The log names every exception in a `[throw]` line with its type, its value (the engine's
 error codes are listed in `Common/Errors.h`) and the call chain. `tools/resolve_log.py`
 turns the chain into function names, again with the symbols of exactly the installed
-build. Lines starting with `[mem]` (after each engine subsystem has come up) and
-`[d3d8] memory` (whenever the numbers moved by several megabytes) show how full the C
-heap and vitaGL's pools were along the way. Every ten seconds a `[d3d8]` line gives the
+build. Lines starting with `[mem]` (after each engine subsystem has come up, and every
+minute of a mission with the largest memory pools of the engine) and `[d3d8] memory`
+(whenever the numbers moved by several megabytes) show how full the C heap and vitaGL's
+pools were along the way. Every ten seconds a `[d3d8]` line gives the
 frame rate and the number of draw calls.
 
 While only the executable changes there is no need to reinstall the package: replacing
@@ -998,10 +1001,10 @@ calls vitaGL directly; that file does not include `VitaD3D8GL.h`.
 - The surface of a texture level shares the lifetime and the reference count of its
   texture, as in Direct3D. The D3DX replacement in CompatLib depends on it when it
   builds mip chains (`D3DXFilterTexture`).
-- Measured with the 300 MiB heap: 48 MiB are taken before `main()` by the engine's
-  preallocated memory pools, the game client adds 31 MiB, and the first mission another
-  56 MiB. GeneralsX's buffers for explaining multiplayer desyncs took 72 MiB on top; the
-  build switches them off (`DEEP_CRC_TO_MEMORY=0` in `cmake/vita.cmake`). vitaGL fills its
+- Measured with the 300 MiB heap, before the memory pools started small (see below): 48 MiB
+  are taken before `main()` by the engine's preallocated memory pools, the game client adds
+  31 MiB, and the first mission another 56 MiB. GeneralsX's buffers for explaining
+  multiplayer desyncs took 72 MiB on top; the build switches them off (`DEEP_CRC_TO_MEMORY=0` in `cmake/vita.cmake`). vitaGL fills its
   share of main memory (about 26 MiB) while starting and takes part of the GPU memory.
 - A process can have 64 files open, and about 20 are the game's `.big` archives. FreeType
   keeps the file of every face open, and the engine creates a face per font, size and
@@ -1143,7 +1146,24 @@ calls vitaGL directly; that file does not include `VitaD3D8GL.h`.
   skirmishes left their recordings at step 3300 and at step 5000. Both settings of the
   pathfinder computed the same state there, so the pathfinder is not the cause; what is, is
   not known yet. Played without drawing, the second one also ran the heap full at step 11800,
-  with and without the render thread.
+  with and without the render thread. That was not the game: the audio manager of a headless
+  run, which has no device, kept every request to play a sound with its event, 55 MB of the
+  memory pools by step 13000 (`VitaSilentAudioManager::appendAudioRequest()` lets go of them
+  at once now; the event and its random values were made before). Drawables without an
+  object whose time is up, the tracers of shots and the ropes of Chinooks, are destroyed by
+  `GameClient::updateHeadless()` now as well. The replay plays to its end now, with the
+  heap's top at 165 MB.
+- The engine's memory pools take blocks from the heap in blobs and never give them back.
+  Their initial sizes were chosen for a PC, and in the seven-AI skirmish 22 of the 104 MB
+  the pools held were never used (`dmaPool_128` started with 80000 blocks and used at most
+  33000). On the console a pool starts with the count it adds when it runs out
+  (`startPoolAtOverflowCount()` in `GameMemoryInit.cpp`). With many blobs that are nearly
+  full, an allocation walked all of a pool's blobs to find a free block whenever its current
+  one was full; each pool keeps a list of its blobs with free blocks now
+  (`MemoryPoolBlob::addToFreeBlobList()`). Played without drawing against the PC start
+  sizes, the replay of that skirmish ran as fast (13.5 steps per second, 74 ms per step),
+  computed the same state at all 137 checks, and the heap's top was 16 MB lower (165 MB
+  against 181).
 - Saving a replay from the score screen left an empty file and showed "File operation
   failed": `CopyFile()` of the compatibility layer used `std::filesystem::copy_file()`, which
   creates the new file with the console's newlib but copies nothing into it. It copies with
